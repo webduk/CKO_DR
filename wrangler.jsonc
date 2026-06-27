@@ -1,0 +1,15 @@
+{
+  // Cloudflare Workers Static Assets config for this Vite SPA.
+  // `wrangler deploy` uploads ./dist and serves it from the edge.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cko-dr",
+  "compatibility_date": "2026-06-27",
+  "assets": {
+    "directory": "./dist",
+    // SPA fallback: serve index.html (HTTP 200) for any path that doesn't
+    // match a built asset, so client-side routes like /accounts/report work on
+    // direct load and refresh. Replaces the _redirects `/* /index.html 200`
+    // rule, which the Workers assets validator rejects as an infinite loop.
+    "not_found_handling": "single-page-application"
+  }
+}

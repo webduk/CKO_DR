@@ -11,9 +11,14 @@ This is a Vite + React single-page app. The build produces static files in
 | Build output dir    | `dist`          |
 | Node version        | 18 or newer     |
 
-SPA routing is handled by [`public/_redirects`](public/_redirects), which Vite
-copies into `dist/`. It rewrites every unmatched path to `index.html` so deep
-links like `/accounts/report` work on direct load and refresh.
+SPA routing is configured in [`wrangler.jsonc`](wrangler.jsonc) via
+`assets.not_found_handling: "single-page-application"`, which serves
+`index.html` for any path that isn't a built asset, so deep links like
+`/accounts/report` work on direct load and refresh.
+
+> Note: do **not** use a `_redirects` file with `/* /index.html 200` here.
+> The Workers Static Assets validator rejects that rule as an infinite loop —
+> use `not_found_handling` instead.
 
 ## Environment variables
 
@@ -37,14 +42,15 @@ and a Google Maps key restricted to your site's domain.
 4. Add the environment variables.
 5. Deploy. Every push to the production branch redeploys automatically.
 
-## Option B — Direct upload via Wrangler
+## Option B — Direct upload via Wrangler (Workers Static Assets)
 
-No repo required — uploads the local build straight to Pages:
+No repo required — builds locally and uploads `dist/` to the Worker named in
+[`wrangler.jsonc`](wrangler.jsonc):
 
 ```sh
 npm install -D wrangler          # one-time
 npm run build                    # produces dist/
-npx wrangler pages deploy dist --project-name=<your-project-name>
+npx wrangler deploy              # uploads ./dist per wrangler.jsonc
 ```
 
 Wrangler will prompt you to log in to Cloudflare on first use. For this path,
