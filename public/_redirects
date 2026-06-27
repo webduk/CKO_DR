@@ -1,0 +1,4 @@
+# Cloudflare Pages SPA fallback: serve index.html for any path that isn't a
+# real static asset, so client-side routes (e.g. /accounts/report) work on
+# direct load and refresh. 200 = rewrite (URL stays), not a redirect.
+/*    /index.html    200
