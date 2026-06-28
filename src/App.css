@@ -367,6 +367,93 @@
   letter-spacing: 0.05em;
 }
 
+/* --- File attachments / drag-and-drop --- */
+.file-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 1.1rem 1rem;
+  font-size: 0.9rem;
+  opacity: 0.85;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+}
+.file-dropzone.compact {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+}
+.file-dropzone:hover {
+  border-color: var(--accent, #646cff);
+  opacity: 1;
+}
+.file-dropzone.dragging {
+  border-color: var(--accent, #646cff);
+  background: var(--accent-bg, rgba(100, 108, 255, 0.08));
+  opacity: 1;
+}
+.file-dropzone.disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.attachment-list,
+.attachment-pending-list {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.attachment-pending-list li,
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: var(--accent-bg, rgba(100, 108, 255, 0.06));
+}
+.attachment-chip a {
+  color: inherit;
+  font-weight: 600;
+}
+.attachment-size {
+  opacity: 0.6;
+  font-size: 0.78rem;
+}
+.attachment-remove {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.6;
+}
+.attachment-remove:hover {
+  opacity: 1;
+}
+
+.dr-attachments-row td {
+  background: color-mix(in srgb, var(--border) 12%, transparent);
+}
+.dr-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.dr-attachments-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
 .design-request-table input,
 .design-request-table select,
 .design-request-table textarea {

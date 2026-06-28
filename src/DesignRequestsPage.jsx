@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
@@ -7,6 +7,37 @@ const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
+
+// Supabase Storage bucket that holds design-request file attachments. The file
+// metadata (name, path, size) lives in the `design_request_attachments` table;
+// the binary lives in this bucket. See DEPLOY.md / the SQL in the PR for setup.
+const ATTACH_BUCKET = 'design-request-files'
+
+// Columns pulled for every design request, including its embedded attachment
+// rows so the file list renders straight from the joined data.
+const REQUEST_SELECT =
+  '*, accounts(usi), request_type:request_types(name), ' +
+  'design_request_attachments(id, file_name, storage_path, mime_type, size_bytes)'
+
+// Public download URL for a stored file.
+function attachmentUrl(path) {
+  if (!supabase) return '#'
+  return supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
+}
+
+// "1.4 MB" / "820 B" — compact human-readable size for the file chips.
+function formatBytes(bytes) {
+  if (bytes == null) return ''
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i += 1
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`
+}
 
 // Derive a "June 2026" label from an ISO date string ("2026-06-20"). We read the
 // year/month off the string directly rather than via `new Date()` to avoid the
@@ -28,6 +59,12 @@ function DesignRequestsPage() {
   const [reqDate, setReqDate] = useState('')
   const [reqDetails, setReqDetails] = useState('')
   const [reqStatus, setReqStatus] = useState(null)
+  // Files dropped on the create form before the record exists; uploaded right
+  // after the design request is inserted (we need its id for the storage path).
+  const [pendingFiles, setPendingFiles] = useState([])
+  // Id of the request currently uploading attachments (drives a busy state on
+  // its drop zone); null when nothing is uploading.
+  const [uploadingId, setUploadingId] = useState(null)
   const [query, setQuery] = useState('')
   // `editReqId` is the design request row currently in edit mode (null = none);
   // `editReq` holds its in-progress values until saved or cancelled.
@@ -81,7 +118,7 @@ function DesignRequestsPage() {
     if (!supabase) return
     const { data, error } = await supabase
       .from('design_requests')
-      .select('*, accounts(usi), request_type:request_types(name)')
+      .select(REQUEST_SELECT)
       .order('id', { ascending: true })
     if (error) {
       console.error('Error fetching design requests:', error)
@@ -110,7 +147,7 @@ function DesignRequestsPage() {
         request_date: reqDate,
         details,
       })
-      .select('*, accounts(usi), request_type:request_types(name)')
+      .select(REQUEST_SELECT)
       .single()
     if (error) {
       console.error('Error adding design request:', error)
@@ -120,16 +157,135 @@ function DesignRequestsPage() {
       })
       return
     }
-    setDesignRequests((prev) => [...prev, data])
+    // Upload any files dropped on the create form now that the record (and its
+    // id, needed for the storage path) exists. Surface partial failures but
+    // keep the record either way.
+    let attachments = []
+    let attachError = null
+    if (pendingFiles.length > 0) {
+      setUploadingId('new')
+      try {
+        attachments = await uploadFilesForRequest(data.id, pendingFiles)
+      } catch (err) {
+        console.error('Error uploading attachments:', err)
+        attachError = err.message
+      }
+      setUploadingId(null)
+    }
+    const created = { ...data, design_request_attachments: attachments }
+
+    setDesignRequests((prev) => [...prev, created])
     setReqAccountId('')
     setReqTypeId('')
     setReqName('')
     setReqDate('')
     setReqDetails('')
-    setReqStatus({
-      type: 'success',
-      message: 'Design record successfully created.',
-    })
+    setPendingFiles([])
+    setReqStatus(
+      attachError
+        ? {
+            type: 'error',
+            message: `Record created, but some files failed to upload: ${attachError}`,
+          }
+        : { type: 'success', message: 'Design record successfully created.' }
+    )
+  }
+
+  // --- File attachments (Supabase Storage + design_request_attachments) ---
+
+  // Upload each File to the bucket and insert its metadata row. Returns the
+  // inserted attachment rows. Throws on the first failure so callers can report
+  // it. The index keeps paths unique when several files share a timestamp.
+  async function uploadFilesForRequest(requestId, files) {
+    const inserted = []
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i]
+      const safeName = file.name.replace(/[^\w.-]+/g, '_')
+      const path = `${requestId}/${Date.now()}-${i}-${safeName}`
+      const { error: upErr } = await supabase.storage
+        .from(ATTACH_BUCKET)
+        .upload(path, file, { upsert: false, contentType: file.type || undefined })
+      if (upErr) throw upErr
+      const { data, error } = await supabase
+        .from('design_request_attachments')
+        .insert({
+          design_request_id: requestId,
+          file_name: file.name,
+          storage_path: path,
+          mime_type: file.type || null,
+          size_bytes: file.size,
+        })
+        .select('id, file_name, storage_path, mime_type, size_bytes')
+        .single()
+      if (error) throw error
+      inserted.push(data)
+    }
+    return inserted
+  }
+
+  // Upload files dropped onto an existing request's row and merge them into the
+  // visible attachment list.
+  async function addFilesToRequest(requestId, files) {
+    if (!supabase || files.length === 0) return
+    setUploadingId(requestId)
+    try {
+      const inserted = await uploadFilesForRequest(requestId, files)
+      setDesignRequests((prev) =>
+        prev.map((r) =>
+          r.id === requestId
+            ? {
+                ...r,
+                design_request_attachments: [
+                  ...(r.design_request_attachments ?? []),
+                  ...inserted,
+                ],
+              }
+            : r
+        )
+      )
+      setReqStatus({
+        type: 'success',
+        message: `Attached ${inserted.length} file${inserted.length === 1 ? '' : 's'}.`,
+      })
+    } catch (err) {
+      console.error('Error uploading attachments:', err)
+      setReqStatus({ type: 'error', message: `Could not upload: ${err.message}` })
+    }
+    setUploadingId(null)
+  }
+
+  // Delete a stored file and its metadata row, then drop it from the row's list.
+  async function deleteAttachment(requestId, attachment) {
+    if (!supabase) return
+    const { error: rmErr } = await supabase.storage
+      .from(ATTACH_BUCKET)
+      .remove([attachment.storage_path])
+    if (rmErr) {
+      console.error('Error removing file from storage:', rmErr)
+      setReqStatus({ type: 'error', message: `Could not delete file: ${rmErr.message}` })
+      return
+    }
+    const { error } = await supabase
+      .from('design_request_attachments')
+      .delete()
+      .eq('id', attachment.id)
+    if (error) {
+      console.error('Error deleting attachment row:', error)
+      setReqStatus({ type: 'error', message: `Could not delete file: ${error.message}` })
+      return
+    }
+    setDesignRequests((prev) =>
+      prev.map((r) =>
+        r.id === requestId
+          ? {
+              ...r,
+              design_request_attachments: (r.design_request_attachments ?? []).filter(
+                (a) => a.id !== attachment.id
+              ),
+            }
+          : r
+      )
+    )
   }
 
   function startEditRequest(request) {
@@ -176,7 +332,7 @@ function DesignRequestsPage() {
         details,
       })
       .eq('id', id)
-      .select('*, accounts(usi), request_type:request_types(name)')
+      .select(REQUEST_SELECT)
     if (error) {
       console.error('Error updating design request:', error)
       setReqStatus({
@@ -426,18 +582,73 @@ function DesignRequestsPage() {
         </td>
       </tr>
     ) : (
-      <tr key={request.id}>
-        <td>{request.accounts?.usi ?? '—'}</td>
-        <td>{request.request_type?.name ?? '—'}</td>
-        <td>{request.requestor_name}</td>
-        <td className="dr-date">{request.request_date}</td>
-        <td>{request.details}</td>
-        <td className="row-actions">
-          <button type="button" onClick={() => startEditRequest(request)}>
-            Edit
-          </button>
-        </td>
-      </tr>
+      <Fragment key={request.id}>
+        <tr>
+          <td>{request.accounts?.usi ?? '—'}</td>
+          <td>{request.request_type?.name ?? '—'}</td>
+          <td>{request.requestor_name}</td>
+          <td className="dr-date">{request.request_date}</td>
+          <td>{request.details}</td>
+          <td className="row-actions">
+            <button type="button" onClick={() => startEditRequest(request)}>
+              Edit
+            </button>
+          </td>
+        </tr>
+        <tr className="dr-attachments-row">
+          <td colSpan={6}>{renderAttachments(request)}</td>
+        </tr>
+      </Fragment>
+    )
+  }
+
+  // Attachment chips + drop zone shown beneath each request in read mode.
+  function renderAttachments(request) {
+    const files = request.design_request_attachments ?? []
+    return (
+      <div className="dr-attachments">
+        <span className="dr-attachments-label">
+          Attachments{files.length ? ` (${files.length})` : ''}
+        </span>
+        {files.length > 0 && (
+          <ul className="attachment-list">
+            {files.map((att) => (
+              <li key={att.id} className="attachment-chip">
+                <a
+                  href={attachmentUrl(att.storage_path)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {att.file_name}
+                </a>
+                {att.size_bytes != null && (
+                  <span className="attachment-size">
+                    {formatBytes(att.size_bytes)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  aria-label={`Delete ${att.file_name}`}
+                  onClick={() => deleteAttachment(request.id, att)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <FileDropzone
+          compact
+          disabled={uploadingId === request.id}
+          onFiles={(dropped) => addFilesToRequest(request.id, dropped)}
+          label={
+            uploadingId === request.id
+              ? 'Uploading…'
+              : 'Drag & drop files here, or click to attach'
+          }
+        />
+      </div>
     )
   }
 
@@ -485,6 +696,35 @@ function DesignRequestsPage() {
           placeholder="Details for request"
           rows={3}
         />
+        <FileDropzone
+          onFiles={(files) => setPendingFiles((prev) => [...prev, ...files])}
+          disabled={uploadingId === 'new'}
+          label={
+            uploadingId === 'new'
+              ? 'Uploading…'
+              : 'Drag & drop files here, or click to attach'
+          }
+        />
+        {pendingFiles.length > 0 && (
+          <ul className="attachment-pending-list">
+            {pendingFiles.map((file, i) => (
+              <li key={`${file.name}-${i}`}>
+                <span className="attachment-name">{file.name}</span>
+                <span className="attachment-size">{formatBytes(file.size)}</span>
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() =>
+                    setPendingFiles((prev) => prev.filter((_, j) => j !== i))
+                  }
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <button type="submit">Add Request</button>
         {reqStatus && (
           <p className={`form-status ${reqStatus.type}`}>{reqStatus.message}</p>
@@ -588,6 +828,61 @@ function DesignRequestsPage() {
         </tbody>
       </table>
     </main>
+  )
+}
+
+// Drag-and-drop (and click-to-choose) zone for selecting multiple files. Calls
+// onFiles with an array of File objects; the parent decides what to do with
+// them (queue for upload, or upload immediately).
+function FileDropzone({ onFiles, disabled = false, compact = false, label }) {
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef(null)
+
+  function emit(fileList) {
+    const files = [...fileList]
+    if (files.length) onFiles(files)
+  }
+
+  return (
+    <div
+      className={
+        'file-dropzone' +
+        (compact ? ' compact' : '') +
+        (dragging ? ' dragging' : '') +
+        (disabled ? ' disabled' : '')
+      }
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      onClick={() => !disabled && inputRef.current?.click()}
+      onKeyDown={(e) => {
+        if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault()
+          inputRef.current?.click()
+        }
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (!disabled) setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragging(false)
+        if (!disabled) emit(e.dataTransfer.files)
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          emit(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      <span>{label ?? 'Drag & drop files here, or click to choose'}</span>
+    </div>
   )
 }
 
