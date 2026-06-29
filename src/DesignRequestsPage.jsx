@@ -8,6 +8,17 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
+// Design-request lifecycle statuses. 'closed' records are hidden from the list,
+// so only 'active' and 'on_hold' rows are ever shown.
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'on_hold', label: 'On Hold' },
+  { value: 'closed', label: 'Closed' },
+]
+const STATUS_LABELS = Object.fromEntries(
+  STATUS_OPTIONS.map((s) => [s.value, s.label])
+)
+
 // Supabase Storage bucket that holds design-request file attachments. The file
 // metadata (name, path, size) lives in the `design_request_attachments` table;
 // the binary lives in this bucket. See DEPLOY.md / the SQL in the PR for setup.
@@ -364,13 +375,14 @@ function DesignRequestsPage() {
     setReqStatus({ type: 'success', message: 'Design record successfully updated.' })
   }
 
-  // One-click flip between active and closed without entering edit mode.
-  async function toggleRequestStatus(request) {
+  // One-click close (archive) without entering edit mode. Closing flips status
+  // to 'closed', which drops the row out of the visible list. To reopen or set
+  // "On Hold", use Edit and pick the status there.
+  async function closeRequest(request) {
     if (!supabase) return
-    const next = request.status === 'closed' ? 'active' : 'closed'
     const { data, error } = await supabase
       .from('design_requests')
-      .update({ status: next })
+      .update({ status: 'closed' })
       .eq('id', request.id)
       .select(REQUEST_SELECT)
     if (error) {
@@ -393,10 +405,7 @@ function DesignRequestsPage() {
     setDesignRequests((prev) =>
       prev.map((r) => (r.id === request.id ? data[0] : r))
     )
-    setReqStatus({
-      type: 'success',
-      message: `Request marked ${next}.`,
-    })
+    setReqStatus({ type: 'success', message: 'Request closed.' })
   }
 
   // --- Request Type option management (add / rename / delete) ---
@@ -506,11 +515,13 @@ function DesignRequestsPage() {
     setTypeStatus({ type: 'success', message: 'Request type deleted.' })
   }
 
+  // Closed requests are archived: only active / on-hold rows are shown.
   // Search by site (USI), requestor and details, case-insensitive.
   const filtered = useMemo(() => {
+    const visible = designRequests.filter((r) => r.status !== 'closed')
     const q = query.trim().toLowerCase()
-    if (!q) return designRequests
-    return designRequests.filter((r) =>
+    if (!q) return visible
+    return visible.filter((r) =>
       [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date, r.status]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
@@ -622,8 +633,11 @@ function DesignRequestsPage() {
               setEditReq((p) => ({ ...p, status: e.target.value }))
             }
           >
-            <option value="active">Active</option>
-            <option value="closed">Closed</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
           </select>
         </td>
         <td className="row-actions">
@@ -644,20 +658,16 @@ function DesignRequestsPage() {
           <td className="dr-date">{request.request_date}</td>
           <td>{request.details}</td>
           <td>
-            <span
-              className={`status-badge status-badge--${
-                request.status === 'closed' ? 'closed' : 'active'
-              }`}
-            >
-              {request.status === 'closed' ? 'Closed' : 'Active'}
+            <span className={`status-badge status-badge--${request.status}`}>
+              {STATUS_LABELS[request.status] ?? request.status}
             </span>
           </td>
           <td className="row-actions">
             <button type="button" onClick={() => startEditRequest(request)}>
               Edit
             </button>
-            <button type="button" onClick={() => toggleRequestStatus(request)}>
-              {request.status === 'closed' ? 'Reopen' : 'Close'}
+            <button type="button" onClick={() => closeRequest(request)}>
+              Close
             </button>
           </td>
         </tr>
@@ -766,8 +776,11 @@ function DesignRequestsPage() {
           value={reqStatusValue}
           onChange={(e) => setReqStatusValue(e.target.value)}
         >
-          <option value="active">Active</option>
-          <option value="closed">Closed</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
         </select>
         <FileDropzone
           onFiles={(files) => setPendingFiles((prev) => [...prev, ...files])}
@@ -883,9 +896,9 @@ function DesignRequestsPage() {
           {filtered.length === 0 && (
             <tr>
               <td className="empty" colSpan={7}>
-                {designRequests.length === 0
-                  ? 'No design requests yet'
-                  : `No design requests match “${query}”`}
+                {query
+                  ? `No design requests match “${query}”`
+                  : 'No active or on-hold design requests'}
               </td>
             </tr>
           )}

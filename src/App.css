@@ -792,6 +792,10 @@
   background: #fce7ec;
   color: #b9123c;
 }
+.status-badge--on_hold {
+  background: #fef3c7;
+  color: #92400e;
+}
 .status-badge--closed {
   background: #e5e7eb;
   color: #4b5563;
