@@ -5,11 +5,17 @@ This is a Vite + React single-page app. The build produces static files in
 
 ## Build settings
 
-| Setting             | Value           |
-| ------------------- | --------------- |
-| Build command       | `npm run build` |
-| Build output dir    | `dist`          |
-| Node version        | 18 or newer     |
+| Setting             | Value              |
+| ------------------- | ------------------ |
+| Build command       | `npm run build`    |
+| Build output dir    | `dist`             |
+| Node version        | 20.19+ or 22.12+   |
+
+> Vite 8 requires Node `^20.19.0 || >=22.12.0`. The version is pinned for
+> Cloudflare's build environment in [`.node-version`](.node-version) (Cloudflare
+> reads `.node-version` / `.nvmrc`). Without it the build image may default to
+> an older Node and `npm run build` fails with an engine error before producing
+> `dist/`.
 
 SPA routing is configured in [`wrangler.jsonc`](wrangler.jsonc) via
 `assets.not_found_handling: "single-page-application"`, which serves
