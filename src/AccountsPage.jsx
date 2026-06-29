@@ -269,6 +269,47 @@ function AccountsPage() {
     setStatus({ type: 'success', message: `Account “${updated.usi}” updated.` })
   }
 
+  async function deleteAccount(account) {
+    if (!supabase) return
+    if (
+      !window.confirm(
+        `Delete account “${account.usi}”? This cannot be undone.`
+      )
+    )
+      return
+    // Chain .select() so the response carries the deleted rows: zero rows back
+    // (with no error) means an RLS DELETE policy silently blocked the write.
+    const { data, error } = await supabase
+      .from('accounts')
+      .delete()
+      .eq('id', account.id)
+      .select('id')
+    if (error) {
+      console.error('Error deleting account:', error)
+      // 23503 = FK violation: design requests (or another table) still point at
+      // this account, so the database refuses to orphan them.
+      const message =
+        error.code === '23503'
+          ? 'Cannot delete: this account still has linked design requests. ' +
+            'Reassign or delete those first.'
+          : `Could not delete: ${error.message}`
+      setStatus({ type: 'error', message })
+      return
+    }
+    if (!data || data.length === 0) {
+      setStatus({
+        type: 'error',
+        message:
+          'Delete was blocked by the database (no row removed). Check the ' +
+          'Supabase Row-Level Security DELETE policy on the accounts table.',
+      })
+      return
+    }
+    setAccounts((prev) => prev.filter((a) => a.id !== account.id))
+    if (editingId === account.id) cancelEdit()
+    setStatus({ type: 'success', message: `Account “${account.usi}” deleted.` })
+  }
+
   // Show accounts (filtered by the free-form search) sorted alphabetically by
   // the USI's middle "Area" segment. The search matches against the USI,
   // address fields, notes, and every role company name shown in the table.
@@ -519,6 +560,9 @@ function AccountsPage() {
                 <td className="row-actions">
                   <button type="button" onClick={() => startEdit(account)}>
                     Edit
+                  </button>
+                  <button type="button" onClick={() => deleteAccount(account)}>
+                    Delete
                   </button>
                 </td>
               </tr>
