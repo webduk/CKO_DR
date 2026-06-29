@@ -28,14 +28,33 @@ SPA routing is configured in [`wrangler.jsonc`](wrangler.jsonc) via
 
 ## Environment variables
 
-Set these in **Cloudflare Pages → your project → Settings → Environment
-variables** (add them to the **Production** — and **Preview**, if you use it —
-environment). They must exist at build time because Vite inlines `VITE_*` vars
-into the bundle. See [.env.example](.env.example) for the full list:
+The app needs these three vars (see [.env.example](.env.example) for the full
+list). Use the same values that are in your local `.env`:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 - `VITE_GOOGLE_MAPS_API_KEY`
+
+Set them where Cloudflare can read them **during the build**:
+
+- **Workers Build** (this project — `wrangler.jsonc` defines a Worker named
+  `cko-dr`): **Workers & Pages → `cko-dr` → Settings → Build → Variables and
+  secrets**.
+- **Pages project** (if set up that way instead): **Settings → Environment
+  variables → Production** (and **Preview**, if you use it).
+
+> ⚠️ **They must be build-time variables, not runtime Worker Secrets.** Vite
+> inlines `VITE_*` into the bundle at build time, so a value that only exists at
+> runtime (a Worker Secret / binding, or a `vars` entry in `wrangler.jsonc`) is
+> invisible to `npm run build` and will NOT work. The symptom of getting this
+> wrong: the site loads but shows **no data** (`supabase` is `null` because the
+> URL/key were `undefined` at build), and the map reports a missing key.
+>
+> `.env` is gitignored, so these values never reach the repo — they MUST be set
+> in the Cloudflare project or the build bakes in `undefined`.
+
+After adding or changing them, **trigger a new deployment** — existing builds
+are not rebuilt retroactively.
 
 These end up in the public client bundle, so only use the Supabase **anon** key
 and a Google Maps key restricted to your site's domain.
