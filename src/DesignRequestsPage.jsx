@@ -315,24 +315,25 @@ function DesignRequestsPage() {
     if (!supabase) return
     const requestor = editReq.requestor_name.trim()
     const details = editReq.details.trim()
-    if (
-      !editReq.account_id ||
-      !editReq.request_type_id ||
-      !requestor ||
-      !editReq.request_date ||
-      !details
-    ) {
+    // Site and request type are optional: legacy requests (linked via the older
+    // company_id model) have no account_id/request_type_id, and forcing them
+    // would block editing those records. Requestor, date and details remain
+    // required.
+    if (!requestor || !editReq.request_date || !details) {
       setReqStatus({
         type: 'error',
-        message: 'Please fill in all fields before saving.',
+        message: 'Requestor, date and details are required.',
       })
       return
     }
     const { data, error } = await supabase
       .from('design_requests')
       .update({
-        account_id: Number(editReq.account_id),
-        request_type_id: Number(editReq.request_type_id),
+        // Empty string → null (not Number('') === 0, which would be a bogus FK).
+        account_id: editReq.account_id ? Number(editReq.account_id) : null,
+        request_type_id: editReq.request_type_id
+          ? Number(editReq.request_type_id)
+          : null,
         requestor_name: requestor,
         request_date: editReq.request_date,
         details,
