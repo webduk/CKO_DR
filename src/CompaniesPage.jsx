@@ -14,10 +14,6 @@ function CompaniesPage() {
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', type: '' })
 
-  useEffect(() => {
-    fetchCompanies()
-  }, [])
-
   async function fetchCompanies() {
     if (!supabase) return
     const { data, error } = await supabase
@@ -30,6 +26,11 @@ function CompaniesPage() {
     }
     setCompanies(data ?? [])
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
+    fetchCompanies()
+  }, [])
 
   async function addCompany(e) {
     e.preventDefault()

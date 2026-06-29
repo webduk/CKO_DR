@@ -64,10 +64,6 @@ function AccountsReportPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  useEffect(() => {
-    loadReport()
-  }, [])
-
   async function loadReport() {
     if (!supabase) {
       setError('Not connected to Supabase.')
@@ -101,6 +97,11 @@ function AccountsReportPage() {
     setError(null)
     setLoading(false)
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
+    loadReport()
+  }, [])
 
   // Filter by account name (USI) and address, case-insensitive, then order the
   // page by each account's earliest active design request date (earliest at the

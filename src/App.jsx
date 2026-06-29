@@ -10,11 +10,6 @@ function App() {
   const [newTodo, setNewTodo] = useState('')
   const [designRequestCount, setDesignRequestCount] = useState(null)
 
-  useEffect(() => {
-    fetchTodos()
-    fetchDesignRequestCount()
-  }, [])
-
   async function fetchDesignRequestCount() {
     if (!supabase) return
     const { count, error } = await supabase
@@ -39,6 +34,12 @@ function App() {
     }
     setTodos(data ?? [])
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
+    fetchTodos()
+    fetchDesignRequestCount()
+  }, [])
 
   async function addTodo(e) {
     e.preventDefault()

@@ -12,19 +12,6 @@ function ContactsPage() {
   const [newContact, setNewContact] = useState(EMPTY_CONTACT)
   const [status, setStatus] = useState(null)
 
-  useEffect(() => {
-    fetchCompanies()
-  }, [])
-
-  useEffect(() => {
-    setStatus(null)
-    if (selectedCompanyId) {
-      fetchContacts(selectedCompanyId)
-    } else {
-      setContacts([])
-    }
-  }, [selectedCompanyId])
-
   async function fetchCompanies() {
     if (!supabase) return
     const { data, error } = await supabase
@@ -51,6 +38,20 @@ function ContactsPage() {
     }
     setContacts(data ?? [])
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
+    fetchCompanies()
+  }, [])
+
+  useEffect(() => {
+    if (selectedCompanyId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
+      fetchContacts(selectedCompanyId)
+    } else {
+      setContacts([])
+    }
+  }, [selectedCompanyId])
 
   async function addContact(e) {
     e.preventDefault()
@@ -130,7 +131,10 @@ function ContactsPage() {
         Company
         <select
           value={selectedCompanyId}
-          onChange={(e) => setSelectedCompanyId(e.target.value)}
+          onChange={(e) => {
+            setStatus(null)
+            setSelectedCompanyId(e.target.value)
+          }}
         >
           <option value="">Select a company…</option>
           {companies.map((company) => (
