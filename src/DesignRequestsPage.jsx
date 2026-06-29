@@ -58,6 +58,8 @@ function DesignRequestsPage() {
   const [reqName, setReqName] = useState('')
   const [reqDate, setReqDate] = useState('')
   const [reqDetails, setReqDetails] = useState('')
+  // The new design request's lifecycle status ('active' | 'closed').
+  const [reqStatusValue, setReqStatusValue] = useState('active')
   const [reqStatus, setReqStatus] = useState(null)
   // Files dropped on the create form before the record exists; uploaded right
   // after the design request is inserted (we need its id for the storage path).
@@ -75,6 +77,7 @@ function DesignRequestsPage() {
     requestor_name: '',
     request_date: '',
     details: '',
+    status: 'active',
   })
   // Inline management of the Request Type option list (add/rename/delete).
   const [newTypeName, setNewTypeName] = useState('')
@@ -146,6 +149,7 @@ function DesignRequestsPage() {
         requestor_name: requestor,
         request_date: reqDate,
         details,
+        status: reqStatusValue,
       })
       .select(REQUEST_SELECT)
       .single()
@@ -180,6 +184,7 @@ function DesignRequestsPage() {
     setReqName('')
     setReqDate('')
     setReqDetails('')
+    setReqStatusValue('active')
     setPendingFiles([])
     setReqStatus(
       attachError
@@ -297,6 +302,7 @@ function DesignRequestsPage() {
       requestor_name: request.requestor_name ?? '',
       request_date: request.request_date ?? '',
       details: request.details ?? '',
+      status: request.status ?? 'active',
     })
     setReqStatus(null)
   }
@@ -330,6 +336,7 @@ function DesignRequestsPage() {
         requestor_name: requestor,
         request_date: editReq.request_date,
         details,
+        status: editReq.status,
       })
       .eq('id', id)
       .select(REQUEST_SELECT)
@@ -354,6 +361,41 @@ function DesignRequestsPage() {
     setDesignRequests((prev) => prev.map((r) => (r.id === id ? data[0] : r)))
     setEditReqId(null)
     setReqStatus({ type: 'success', message: 'Design record successfully updated.' })
+  }
+
+  // One-click flip between active and closed without entering edit mode.
+  async function toggleRequestStatus(request) {
+    if (!supabase) return
+    const next = request.status === 'closed' ? 'active' : 'closed'
+    const { data, error } = await supabase
+      .from('design_requests')
+      .update({ status: next })
+      .eq('id', request.id)
+      .select(REQUEST_SELECT)
+    if (error) {
+      console.error('Error updating status:', error)
+      setReqStatus({
+        type: 'error',
+        message: `Could not update status: ${error.message}`,
+      })
+      return
+    }
+    if (!data || data.length === 0) {
+      setReqStatus({
+        type: 'error',
+        message:
+          'Status change was blocked by the database (no row changed). Check the ' +
+          'Supabase Row-Level Security UPDATE policy on the design_requests table.',
+      })
+      return
+    }
+    setDesignRequests((prev) =>
+      prev.map((r) => (r.id === request.id ? data[0] : r))
+    )
+    setReqStatus({
+      type: 'success',
+      message: `Request marked ${next}.`,
+    })
   }
 
   // --- Request Type option management (add / rename / delete) ---
@@ -468,7 +510,7 @@ function DesignRequestsPage() {
     const q = query.trim().toLowerCase()
     if (!q) return designRequests
     return designRequests.filter((r) =>
-      [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date]
+      [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date, r.status]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     )
@@ -572,6 +614,17 @@ function DesignRequestsPage() {
             rows={2}
           />
         </td>
+        <td>
+          <select
+            value={editReq.status}
+            onChange={(e) =>
+              setEditReq((p) => ({ ...p, status: e.target.value }))
+            }
+          >
+            <option value="active">Active</option>
+            <option value="closed">Closed</option>
+          </select>
+        </td>
         <td className="row-actions">
           <button type="button" onClick={() => saveEditRequest(request.id)}>
             Save
@@ -589,14 +642,26 @@ function DesignRequestsPage() {
           <td>{request.requestor_name}</td>
           <td className="dr-date">{request.request_date}</td>
           <td>{request.details}</td>
+          <td>
+            <span
+              className={`status-badge status-badge--${
+                request.status === 'closed' ? 'closed' : 'active'
+              }`}
+            >
+              {request.status === 'closed' ? 'Closed' : 'Active'}
+            </span>
+          </td>
           <td className="row-actions">
             <button type="button" onClick={() => startEditRequest(request)}>
               Edit
             </button>
+            <button type="button" onClick={() => toggleRequestStatus(request)}>
+              {request.status === 'closed' ? 'Reopen' : 'Close'}
+            </button>
           </td>
         </tr>
         <tr className="dr-attachments-row">
-          <td colSpan={6}>{renderAttachments(request)}</td>
+          <td colSpan={7}>{renderAttachments(request)}</td>
         </tr>
       </Fragment>
     )
@@ -696,6 +761,13 @@ function DesignRequestsPage() {
           placeholder="Details for request"
           rows={3}
         />
+        <select
+          value={reqStatusValue}
+          onChange={(e) => setReqStatusValue(e.target.value)}
+        >
+          <option value="active">Active</option>
+          <option value="closed">Closed</option>
+        </select>
         <FileDropzone
           onFiles={(files) => setPendingFiles((prev) => [...prev, ...files])}
           disabled={uploadingId === 'new'}
@@ -802,13 +874,14 @@ function DesignRequestsPage() {
             <th>Requestor</th>
             <th>Date</th>
             <th>Details</th>
+            <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {filtered.length === 0 && (
             <tr>
-              <td className="empty" colSpan={6}>
+              <td className="empty" colSpan={7}>
                 {designRequests.length === 0
                   ? 'No design requests yet'
                   : `No design requests match “${query}”`}
@@ -818,7 +891,7 @@ function DesignRequestsPage() {
           {monthGroups.map((group) => (
             <Fragment key={group.key}>
               <tr className="month-group">
-                <th colSpan={6} scope="colgroup">
+                <th colSpan={7} scope="colgroup">
                   {group.label}
                 </th>
               </tr>

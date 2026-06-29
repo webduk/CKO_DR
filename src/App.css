@@ -723,10 +723,101 @@
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+.map-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  opacity: 0.85;
+  margin: 0 0 0.5rem;
+}
+.map-legend-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.map-legend-dot--active {
+  background: #facc15;
+  border-color: #000;
+}
+/* USI label drawn beside each active (yellow) marker. translateX(50%) moves the
+   label's left edge to the marker centre; the extra px clears the dot, so the
+   text always starts just to the right of it regardless of USI length. */
+.map-usi-label {
+  transform: translateX(calc(50% + 14px));
+  white-space: nowrap;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+}
+
+/* Notice listing active requests/sites that couldn't be plotted. */
+.map-unmapped {
+  border: 1px solid #f5c000;
+  background: #fffbeb;
+  color: #713f12;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+.map-unmapped-group {
+  margin-top: 0.5rem;
+}
+.map-unmapped-heading {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+.map-unmapped ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+.map-unmapped li {
+  margin: 0.1rem 0;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-badge--active {
+  background: #fce7ec;
+  color: #b9123c;
+}
+.status-badge--closed {
+  background: #e5e7eb;
+  color: #4b5563;
+}
 .map-notice {
   padding: 1rem;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+/* On PC, let the map fill the whole viewport: the page becomes a flex
+   column and the canvas grows to take all the space left under the header. */
+@media (min-width: 768px) {
+  .map-page {
+    max-width: none;
+    margin: 0;
+    height: 100vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+  .map-canvas {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+  }
 }
 
 .report-page {
