@@ -1,0 +1,19 @@
+# Netlify deploy config for this Vite + React single-page app.
+# `npm run build` outputs static files to dist/, which Netlify serves from its CDN.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback: serve index.html (HTTP 200) for any path that isn't a built
+# file, so client-side routes like /accounts/report work on direct load and
+# refresh. Unlike Cloudflare's Static Assets validator (which rejects this rule
+# as an infinite loop), Netlify accepts it.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The Node version is pinned in .node-version (22.12.0), which Netlify reads
+# automatically. Vite 8 requires Node ^20.19.0 || >=22.12.0, so don't let the
+# build image fall back to an older default.
