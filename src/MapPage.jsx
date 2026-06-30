@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
 
@@ -25,6 +25,26 @@ const MAP_STYLES = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
 ]
+
+// Greater Sydney bounding box (roughly the ABS "Greater Sydney" GCCSA: from the
+// Central Coast/Hawkesbury in the north down to the Royal National Park in the
+// south, and out to the Blue Mountains in the west). Used to frame the initial
+// view on the region and to decide which accounts count as inside it.
+const GREATER_SYDNEY_BOUNDS = {
+  south: -34.25,
+  west: 150.2,
+  north: -33.35,
+  east: 151.4,
+}
+
+function inGreaterSydney(lat, lng) {
+  return (
+    lat >= GREATER_SYDNEY_BOUNDS.south &&
+    lat <= GREATER_SYDNEY_BOUNDS.north &&
+    lng >= GREATER_SYDNEY_BOUNDS.west &&
+    lng <= GREATER_SYDNEY_BOUNDS.east
+  )
+}
 
 // Load the Google Maps JS API once and resolve when ready.
 let mapsLoaderPromise = null
@@ -71,8 +91,9 @@ async function runOverpass(query) {
 }
 
 // Given the active sites ({ name, lat, lng }), fetch each road's geometry in one
-// Overpass request and draw it as a yellow polyline. Returns how many segments
-// were drawn. Failures are logged and treated as "nothing drawn".
+// Overpass request and draw it as a yellow polyline. Returns the array of
+// Polyline objects that were drawn (so callers can toggle them on/off later).
+// Failures are logged and treated as "nothing drawn".
 async function drawActiveStreets(map, streets) {
   // One union query: named highway ways within ~300 m of each site.
   const clauses = streets
@@ -85,22 +106,149 @@ async function drawActiveStreets(map, streets) {
     .join('')
   const query = `[out:json][timeout:25];(${clauses});out geom;`
   const json = await runOverpass(query)
-  if (!json) return 0
-  let drawn = 0
+  if (!json) return []
+  const polylines = []
   for (const el of json.elements ?? []) {
     if (el.type !== 'way' || !el.geometry) continue
     const path = el.geometry.map((g) => ({ lat: g.lat, lng: g.lon }))
-    new window.google.maps.Polyline({
-      map,
-      path,
-      strokeColor: '#facc15',
-      strokeOpacity: 1,
-      strokeWeight: 5,
-      zIndex: 1,
-    })
-    drawn += 1
+    polylines.push(
+      new window.google.maps.Polyline({
+        map,
+        path,
+        strokeColor: '#facc15',
+        strokeOpacity: 1,
+        strokeWeight: 5,
+        zIndex: 1,
+      })
+    )
   }
-  return drawn
+  return polylines
+}
+
+// One labelled row inside a site card (label stacked above its value). Built
+// with text nodes so account notes/builder names can't inject markup.
+function cardRow(label, value) {
+  const row = document.createElement('div')
+  row.className = 'map-card-row'
+  const tag = document.createElement('span')
+  tag.className = 'map-card-label'
+  tag.textContent = label
+  row.appendChild(tag)
+  row.appendChild(document.createTextNode(value || '—'))
+  return row
+}
+
+// Build the HTML element for an active site's card: the CKO account details
+// (USI, builder, notes) for its design request(s). When `onActivate` is given
+// the whole card becomes a button that opens the account on the report page.
+function buildCardEl({ usi, builder, notes, count, onActivate }) {
+  const el = document.createElement('div')
+  el.className = 'map-card'
+
+  if (onActivate) {
+    el.classList.add('map-card--clickable')
+    el.setAttribute('role', 'button')
+    el.tabIndex = 0
+    el.title = `Open ${usi} in the accounts report`
+    el.addEventListener('click', onActivate)
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onActivate()
+      }
+    })
+  }
+
+  const title = document.createElement('div')
+  title.className = 'map-card-title'
+  title.textContent = usi
+  el.appendChild(title)
+
+  const sub = document.createElement('div')
+  sub.className = 'map-card-sub'
+  sub.textContent = `${count} active design request${count === 1 ? '' : 's'}`
+  el.appendChild(sub)
+
+  el.appendChild(cardRow('Builder', builder))
+  el.appendChild(cardRow('Notes', notes))
+  return el
+}
+
+// Card geometry, in horizontal gap (px) the offset from a marker and the gap
+// kept between stacked cards.
+const CARD_OFFSET_X = 16
+const CARD_GAP = 6
+
+// Position every card beside its marker, then de-overlap: process cards top to
+// bottom and, whenever one would cover a card already placed in the same
+// horizontal band, push it straight down past it. Each card therefore stays
+// fully readable even when its site sits right next to another.
+function layoutCards(proj, items) {
+  const boxes = items.map(({ el, position }) => {
+    const p = proj.fromLatLngToDivPixel(position)
+    const w = el.offsetWidth || 210
+    const h = el.offsetHeight || 60
+    return { el, anchorX: p.x, anchorY: p.y, w, h, left: p.x + CARD_OFFSET_X }
+  })
+  // Place cards nearest the top first so we only ever push later cards downward.
+  boxes.sort((a, b) => a.anchorY - b.anchorY || a.anchorX - b.anchorX)
+
+  const placed = []
+  for (const box of boxes) {
+    let top = box.anchorY - box.h / 2 // vertically centred on the marker
+    let moved = true
+    let guard = 0
+    while (moved && guard++ < 200) {
+      moved = false
+      for (const p of placed) {
+        const hOverlap = box.left < p.left + p.w && box.left + box.w > p.left
+        if (!hOverlap) continue
+        const vOverlap =
+          top < p.top + p.h + CARD_GAP && top + box.h + CARD_GAP > p.top
+        if (vOverlap) {
+          top = p.top + p.h + CARD_GAP // drop below the card we collided with
+          moved = true
+        }
+      }
+    }
+    box.top = top
+    placed.push(box)
+    box.el.style.left = `${box.left}px`
+    box.el.style.top = `${top}px`
+  }
+}
+
+// A single OverlayView that owns every site card. Holding them together lets the
+// draw pass lay them all out at once and resolve overlaps; each card still
+// tracks its marker because the layout re-runs on every map transform.
+function createCardsLayer(map) {
+  const items = [] // { el, position }
+  const overlay = new window.google.maps.OverlayView()
+  let pane = null
+
+  overlay.onAdd = function () {
+    pane = this.getPanes().floatPane
+    for (const it of items) pane.appendChild(it.el)
+  }
+  overlay.draw = function () {
+    const proj = this.getProjection()
+    if (proj) layoutCards(proj, items)
+  }
+  overlay.onRemove = function () {
+    for (const it of items) it.el.parentNode?.removeChild(it.el)
+    pane = null
+  }
+  overlay.addCard = function (position, data) {
+    const el = buildCardEl(data)
+    el.style.position = 'absolute'
+    items.push({ el, position })
+    if (pane) pane.appendChild(el)
+    const proj = this.getProjection()
+    if (proj) layoutCards(proj, items)
+  }
+
+  overlay.setMap(map)
+  return overlay
 }
 
 function fullAddress(account) {
@@ -110,8 +258,12 @@ function fullAddress(account) {
 }
 
 function MapPage() {
+  const navigate = useNavigate()
   const mapRef = useRef(null)
   const [status, setStatus] = useState('Loading…')
+  // Which markers to show: 'accounts' = every account, 'active' = only sites
+  // with active design requests (the highlighted ones).
+  const [view, setView] = useState('accounts')
   // Active requests/sites that couldn't be placed on the map, surfaced to the
   // user so the gaps are fixable. { noSite: [...], noAddress: [...], failed: [...] }
   const [unmapped, setUnmapped] = useState({
@@ -119,6 +271,47 @@ function MapPage() {
     noAddress: [],
     failed: [],
   })
+
+  // The placed markers ({ marker, isHighlighted }), the active-street polylines,
+  // and the map instance, kept across renders so the view buttons can toggle
+  // visibility without re-geocoding everything.
+  const markersRef = useRef([])
+  const polylinesRef = useRef([])
+  // Overlay layer holding the persistent info cards, one per active site. It
+  // lays them out together so they never overlap and obscure one another.
+  const cardsLayerRef = useRef(null)
+  const mapInstanceRef = useRef(null)
+
+  // Apply a view to the existing markers/polylines: in 'accounts' every marker
+  // shows; in 'active' only highlighted sites (and their streets) show. When
+  // `fit` is true (the default, used for user-driven view switches) the map is
+  // re-framed to whatever is now visible; the initial load passes false so it
+  // keeps the Greater Sydney framing set in init().
+  function applyView(v, fit = true) {
+    const map = mapInstanceRef.current
+    if (!map) return
+    const bounds = new window.google.maps.LatLngBounds()
+    let visible = 0
+    for (const { marker, isHighlighted } of markersRef.current) {
+      const show = v === 'accounts' || isHighlighted
+      marker.setVisible(show)
+      if (show) {
+        bounds.extend(marker.getPosition())
+        visible++
+      }
+    }
+    for (const line of polylinesRef.current) {
+      line.setMap(v === 'active' ? map : null)
+    }
+    // Cards belong to active sites, which are visible in both views, so the
+    // cards layer stays on the map regardless of the selected view.
+    if (fit && visible > 0) map.fitBounds(bounds)
+  }
+
+  // Re-apply whenever the user switches views (markers may already exist).
+  useEffect(() => {
+    applyView(view)
+  }, [view])
 
   useEffect(() => {
     let cancelled = false
@@ -135,7 +328,9 @@ function MapPage() {
 
       const { data, error } = await supabase
         .from('accounts')
-        .select('id, usi, street_address, suburb, postcode')
+        .select(
+          'id, usi, street_address, suburb, postcode, notes, builder:Companies!builder_id(Name)'
+        )
       if (error) {
         setStatus(`Error loading accounts: ${error.message}`)
         return
@@ -197,8 +392,15 @@ function MapPage() {
         zoom: 5,
         styles: MAP_STYLES,
       })
+      mapInstanceRef.current = map
+      markersRef.current = []
+      polylinesRef.current = []
+      cardsLayerRef.current = createCardsLayer(map)
       const geocoder = new window.google.maps.Geocoder()
-      const bounds = new window.google.maps.LatLngBounds()
+      // Collects only the accounts that fall inside Greater Sydney so the
+      // initial view frames that region (and all its accounts), not far-flung
+      // outliers that would otherwise zoom the map right out.
+      const sydneyBounds = new window.google.maps.LatLngBounds()
       const info = new window.google.maps.InfoWindow()
       // A bright, larger dot marks accounts that have design requests so they
       // stand out from the muted default markers.
@@ -234,19 +436,21 @@ function MapPage() {
                 position,
                 title: account.usi,
                 icon: isHighlighted ? highlightIcon : undefined,
-                // Active sites show their USI as a permanent label beside the
-                // dot; the class shifts the text to the right of the marker.
-                label: isHighlighted
-                  ? {
-                      text: account.usi,
-                      className: 'map-usi-label',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      color: '#1f2937',
-                    }
-                  : undefined,
                 zIndex: isHighlighted ? 2 : 1,
               })
+              markersRef.current.push({ marker, isHighlighted })
+              // Active sites get a permanent card beside the marker with the
+              // CKO account's builder and notes for its design request(s).
+              if (isHighlighted) {
+                cardsLayerRef.current?.addCard(position, {
+                  usi: account.usi,
+                  builder: account.builder?.Name,
+                  notes: account.notes,
+                  count: requestCount,
+                  onActivate: () =>
+                    navigate(`/accounts/report?account=${account.id}`),
+                })
+              }
               marker.addListener('click', () => {
                 const requestLine = isHighlighted
                   ? `<br/><span style="color:#b45309">${requestCount} active design request${
@@ -258,7 +462,9 @@ function MapPage() {
                 )
                 info.open(map, marker)
               })
-              bounds.extend(position)
+              if (inGreaterSydney(position.lat(), position.lng())) {
+                sydneyBounds.extend(position)
+              }
               placed++
               if (isHighlighted) {
                 highlighted++
@@ -288,14 +494,31 @@ function MapPage() {
       }
 
       if (cancelled) return
-      if (placed > 0) map.fitBounds(bounds)
+      // Restrict the initial view to Greater Sydney: frame the accounts that
+      // fall within the region, or the region box itself if none geocoded
+      // there.
+      if (!sydneyBounds.isEmpty()) {
+        map.fitBounds(sydneyBounds)
+      } else {
+        map.fitBounds(
+          new window.google.maps.LatLngBounds(
+            { lat: GREATER_SYDNEY_BOUNDS.south, lng: GREATER_SYDNEY_BOUNDS.west },
+            { lat: GREATER_SYDNEY_BOUNDS.north, lng: GREATER_SYDNEY_BOUNDS.east }
+          )
+        )
+      }
 
       // Redraw the streets of active sites on top of the decluttered basemap.
       let streetsDrawn = 0
       if (activeStreets.length > 0) {
-        streetsDrawn = await drawActiveStreets(map, activeStreets)
+        polylinesRef.current = await drawActiveStreets(map, activeStreets)
+        streetsDrawn = polylinesRef.current.length
       }
       if (cancelled) return
+
+      // Honour the currently selected view now that all markers/streets exist,
+      // but keep the Greater Sydney framing set above (fit = false).
+      applyView(view, false)
 
       // Active requests that never reached the map: those with no site linked,
       // plus any whose site lacks/failed to geocode an address.
@@ -350,6 +573,28 @@ function MapPage() {
       ) : (
         <>
           <p className="map-status">{status}</p>
+          <div className="map-views" role="group" aria-label="Map view">
+            <button
+              type="button"
+              className={`map-view-btn${
+                view === 'accounts' ? ' map-view-btn--active' : ''
+              }`}
+              aria-pressed={view === 'accounts'}
+              onClick={() => setView('accounts')}
+            >
+              All accounts
+            </button>
+            <button
+              type="button"
+              className={`map-view-btn${
+                view === 'active' ? ' map-view-btn--active' : ''
+              }`}
+              aria-pressed={view === 'active'}
+              onClick={() => setView('active')}
+            >
+              Active design requests
+            </button>
+          </div>
           <p className="map-legend">
             <span className="map-legend-dot map-legend-dot--active" />
             Active design requests

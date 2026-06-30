@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
 
@@ -23,6 +23,11 @@ const ACCOUNT_SELECT = [
     (f) => `${f.alias}:Companies!${f.key}(id, Name, "Company Type")`,
   ),
 ].join(', ')
+
+// Companies surfaced as count widgets at the top of the report: each widget
+// shows how many design requests for that company are currently 'active'.
+// Requests link to a company directly via design_requests.company_id.
+const WIDGET_COMPANIES = ['ARW', 'MESO', 'WPA']
 
 const MONTH_NAMES = [
   'January',
@@ -63,6 +68,14 @@ function AccountsReportPage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  // Active-design-request counts for the widget companies (ARW, MESO, WPA).
+  const [widgetCounts, setWidgetCounts] = useState(
+    WIDGET_COMPANIES.map((name) => ({ name, count: null })),
+  )
+  // When arriving from the map (…/accounts/report?account=<id>), this is the
+  // account to auto-expand, scroll to, and highlight.
+  const [searchParams] = useSearchParams()
+  const targetAccountId = searchParams.get('account')
 
   async function loadReport() {
     if (!supabase) {
@@ -71,17 +84,22 @@ function AccountsReportPage() {
       return
     }
     setLoading(true)
-    const [accountsRes, contactsRes, requestsRes] = await Promise.all([
-      supabase.from('accounts').select(ACCOUNT_SELECT).order('usi'),
-      supabase.from('contacts').select('*').order('name'),
-      supabase
-        .from('design_requests')
-        .select('*')
-        .order('request_date', { ascending: false }),
-    ])
+    const [accountsRes, contactsRes, requestsRes, widgetCompaniesRes] =
+      await Promise.all([
+        supabase.from('accounts').select(ACCOUNT_SELECT).order('usi'),
+        supabase.from('contacts').select('*').order('name'),
+        supabase
+          .from('design_requests')
+          .select('*')
+          .order('request_date', { ascending: false }),
+        supabase.from('Companies').select('id, Name').in('Name', WIDGET_COMPANIES),
+      ])
 
     const firstError =
-      accountsRes.error || contactsRes.error || requestsRes.error
+      accountsRes.error ||
+      contactsRes.error ||
+      requestsRes.error ||
+      widgetCompaniesRes.error
     if (firstError) {
       console.error('Error loading report:', firstError)
       setError(firstError.message)
@@ -94,6 +112,23 @@ function AccountsReportPage() {
     // Design requests now belong to a specific account, so group them by
     // account_id — no more bleed across every account sharing a company.
     setRequestsByAccount(groupBy(requestsRes.data ?? [], 'account_id'))
+
+    // Count active design requests per widget company, matching by name → id so
+    // the widgets keep working if company ids change.
+    const idByName = new Map(
+      (widgetCompaniesRes.data ?? []).map((c) => [c.Name, c.id]),
+    )
+    const activeRequests = (requestsRes.data ?? []).filter(
+      (r) => r.status === 'active',
+    )
+    setWidgetCounts(
+      WIDGET_COMPANIES.map((name) => ({
+        name,
+        count: activeRequests.filter((r) => r.company_id === idByName.get(name))
+          .length,
+      })),
+    )
+
     setError(null)
     setLoading(false)
   }
@@ -155,6 +190,18 @@ function AccountsReportPage() {
       </Link>
       <h1>Accounts Report</h1>
 
+      <div className="report-widgets">
+        {widgetCounts.map((w) => (
+          <div
+            key={w.name}
+            className={`stat-widget report-widget report-widget--${w.name.toLowerCase()}`}
+          >
+            <span className="stat-number">{w.count ?? '—'}</span>
+            <span className="stat-label">{w.name}</span>
+          </div>
+        ))}
+      </div>
+
       <input
         type="search"
         className="report-search"
@@ -185,6 +232,7 @@ function AccountsReportPage() {
                 account={account}
                 contactsByCompany={contactsByCompany}
                 requestsByAccount={requestsByAccount}
+                isTarget={String(account.id) === targetAccountId}
               />
             ))}
           </section>
@@ -197,10 +245,25 @@ function AccountsReportPage() {
   )
 }
 
-function AccountReportCard({ account, contactsByCompany, requestsByAccount }) {
+function AccountReportCard({
+  account,
+  contactsByCompany,
+  requestsByAccount,
+  isTarget,
+}) {
   // Each card starts collapsed, showing only the header. The Expand button
-  // reveals the companies, contacts, and design-request tables.
-  const [expanded, setExpanded] = useState(false)
+  // reveals the companies, contacts, and design-request tables. A card linked
+  // to from the map (isTarget) opens expanded.
+  const [expanded, setExpanded] = useState(isTarget)
+  const cardRef = useRef(null)
+
+  // When this is the account linked from the map, bring it into view and flash
+  // it so the user lands on the right record.
+  useEffect(() => {
+    if (isTarget && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isTarget])
 
   // The distinct companies attached to this account across all roles.
   const roleRows = ROLE_FIELDS.map((f) => ({
@@ -233,7 +296,10 @@ function AccountReportCard({ account, contactsByCompany, requestsByAccount }) {
     .join(', ')
 
   return (
-    <section className="report-card">
+    <section
+      ref={cardRef}
+      className={`report-card${isTarget ? ' report-card--target' : ''}`}
+    >
       <header className="report-card-header">
         <h2>{account.usi}</h2>
         {address && <span className="report-address">{address}</span>}

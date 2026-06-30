@@ -87,3 +87,5 @@ your shell) since the build is what bakes them in.
 Add your Pages URL (e.g. `https://<project>.pages.dev`) to the allowed origins
 in your Supabase project (Auth / API settings) and to the HTTP-referrer
 restrictions on the Google Maps API key.
+## test
+
