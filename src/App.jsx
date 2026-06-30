@@ -5,10 +5,18 @@ import viteLogo from './assets/vite.svg'
 import './App.css'
 import supabase from './supabase-client';
 
+// Companies shown as colour-coded active-design-request count widgets under the
+// main blue widget. Requests link to a company directly via company_id.
+const WIDGET_COMPANIES = ['ARW', 'MESO', 'WPA']
+
 function App() {
   const [todos, setTodos] = useState([])
   const [newTodo, setNewTodo] = useState('')
   const [designRequestCount, setDesignRequestCount] = useState(null)
+  // Active-design-request counts for the widget companies (ARW, MESO, WPA).
+  const [widgetCounts, setWidgetCounts] = useState(
+    WIDGET_COMPANIES.map((name) => ({ name, count: null })),
+  )
 
   async function fetchDesignRequestCount() {
     if (!supabase) return
@@ -20,6 +28,37 @@ function App() {
       return
     }
     setDesignRequestCount(count ?? 0)
+  }
+
+  // Count active design requests per widget company, matching by name → id so
+  // the widgets keep working if company ids change.
+  async function fetchWidgetCounts() {
+    if (!supabase) return
+    const { data: companies, error: cErr } = await supabase
+      .from('Companies')
+      .select('id, Name')
+      .in('Name', WIDGET_COMPANIES)
+    if (cErr) {
+      console.error('Error loading widget companies:', cErr)
+      return
+    }
+    const idByName = new Map((companies ?? []).map((c) => [c.Name, c.id]))
+    const { data: reqs, error: rErr } = await supabase
+      .from('design_requests')
+      .select('company_id')
+      .eq('status', 'active')
+      .in('company_id', [...idByName.values()])
+    if (rErr) {
+      console.error('Error counting widget design requests:', rErr)
+      return
+    }
+    setWidgetCounts(
+      WIDGET_COMPANIES.map((name) => ({
+        name,
+        count: (reqs ?? []).filter((r) => r.company_id === idByName.get(name))
+          .length,
+      })),
+    )
   }
 
   async function fetchTodos() {
@@ -39,6 +78,7 @@ function App() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
     fetchTodos()
     fetchDesignRequestCount()
+    fetchWidgetCounts()
   }, [])
 
   async function addTodo(e) {
@@ -110,6 +150,18 @@ function App() {
           </span>
           <span className="stat-label">Active Design Requests</span>
         </Link>
+
+        <div className="report-widgets">
+          {widgetCounts.map((w) => (
+            <div
+              key={w.name}
+              className={`stat-widget report-widget report-widget--${w.name.toLowerCase()}`}
+            >
+              <span className="stat-number">{w.count ?? '—'}</span>
+              <span className="stat-label">{w.name}</span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <div className="ticks"></div>
