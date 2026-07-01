@@ -19,21 +19,34 @@ const STATUS_LABELS = Object.fromEntries(
   STATUS_OPTIONS.map((s) => [s.value, s.label])
 )
 
-// Supabase Storage bucket that holds design-request file attachments. The file
-// metadata (name, path, size) lives in the `design_request_attachments` table;
-// the binary lives in this bucket. See DEPLOY.md / the SQL in the PR for setup.
-const ATTACH_BUCKET = 'design-request-files'
+// The two kinds of files that attach to a design request. Each has its own
+// Storage bucket and metadata table (see supabase/design_request_attachments.sql
+// and supabase/design_request_install_specs.sql). `embed` is the embedded-
+// relation name pulled in REQUEST_SELECT so the file list renders from the join.
+const FILE_KINDS = {
+  attachment: {
+    bucket: 'design-request-files',
+    table: 'design_request_attachments',
+    embed: 'design_request_attachments',
+  },
+  spec: {
+    bucket: 'design-request-install-specs',
+    table: 'design_request_install_specs',
+    embed: 'design_request_install_specs',
+  },
+}
 
-// Columns pulled for every design request, including its embedded attachment
-// rows so the file list renders straight from the joined data.
+// Columns pulled for every design request, including its embedded attachment and
+// installation-spec rows so both file lists render straight from the joined data.
 const REQUEST_SELECT =
   '*, accounts(usi), request_type:request_types(name), ' +
-  'design_request_attachments(id, file_name, storage_path, mime_type, size_bytes)'
+  'design_request_attachments(id, file_name, storage_path, mime_type, size_bytes), ' +
+  'design_request_install_specs(id, file_name, storage_path, mime_type, size_bytes)'
 
-// Public download URL for a stored file.
-function attachmentUrl(path) {
+// Public download URL for a stored file in the given bucket.
+function fileUrl(bucket, path) {
   if (!supabase) return '#'
-  return supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
+  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
 }
 
 // "1.4 MB" / "820 B" — compact human-readable size for the file chips.
@@ -75,9 +88,10 @@ function DesignRequestsPage() {
   // Files dropped on the create form before the record exists; uploaded right
   // after the design request is inserted (we need its id for the storage path).
   const [pendingFiles, setPendingFiles] = useState([])
-  // Id of the request currently uploading attachments (drives a busy state on
-  // its drop zone); null when nothing is uploading.
-  const [uploadingId, setUploadingId] = useState(null)
+  // Key of the file section currently uploading, `${kind}:${requestId}` (or
+  // 'attachment:new' for the create form); null when idle. Drives the busy
+  // state on the matching drop zone so the two sections track independently.
+  const [uploadingKey, setUploadingKey] = useState(null)
   const [query, setQuery] = useState('')
   // `editReqId` is the design request row currently in edit mode (null = none);
   // `editReq` holds its in-progress values until saved or cancelled.
@@ -178,14 +192,14 @@ function DesignRequestsPage() {
     let attachments = []
     let attachError = null
     if (pendingFiles.length > 0) {
-      setUploadingId('new')
+      setUploadingKey('attachment:new')
       try {
-        attachments = await uploadFilesForRequest(data.id, pendingFiles)
+        attachments = await uploadFilesForRequest(data.id, pendingFiles, 'attachment')
       } catch (err) {
         console.error('Error uploading attachments:', err)
         attachError = err.message
       }
-      setUploadingId(null)
+      setUploadingKey(null)
     }
     const created = { ...data, design_request_attachments: attachments }
 
@@ -207,23 +221,26 @@ function DesignRequestsPage() {
     )
   }
 
-  // --- File attachments (Supabase Storage + design_request_attachments) ---
+  // --- Files: attachments + installation specs (Supabase Storage + tables) ---
+  // All three helpers take a `kind` ('attachment' | 'spec') that selects the
+  // bucket, metadata table, and embedded-relation key from FILE_KINDS.
 
-  // Upload each File to the bucket and insert its metadata row. Returns the
-  // inserted attachment rows. Throws on the first failure so callers can report
-  // it. The index keeps paths unique when several files share a timestamp.
-  async function uploadFilesForRequest(requestId, files) {
+  // Upload each File to the kind's bucket and insert its metadata row. Returns
+  // the inserted rows. Throws on the first failure so callers can report it. The
+  // index keeps paths unique when several files share a timestamp.
+  async function uploadFilesForRequest(requestId, files, kind) {
+    const { bucket, table } = FILE_KINDS[kind]
     const inserted = []
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i]
       const safeName = file.name.replace(/[^\w.-]+/g, '_')
       const path = `${requestId}/${Date.now()}-${i}-${safeName}`
       const { error: upErr } = await supabase.storage
-        .from(ATTACH_BUCKET)
+        .from(bucket)
         .upload(path, file, { upsert: false, contentType: file.type || undefined })
       if (upErr) throw upErr
       const { data, error } = await supabase
-        .from('design_request_attachments')
+        .from(table)
         .insert({
           design_request_id: requestId,
           file_name: file.name,
@@ -240,65 +257,53 @@ function DesignRequestsPage() {
   }
 
   // Upload files dropped onto an existing request's row and merge them into the
-  // visible attachment list.
-  async function addFilesToRequest(requestId, files) {
+  // visible list for that kind.
+  async function addFilesToRequest(requestId, files, kind) {
     if (!supabase || files.length === 0) return
-    setUploadingId(requestId)
+    const { embed } = FILE_KINDS[kind]
+    setUploadingKey(`${kind}:${requestId}`)
     try {
-      const inserted = await uploadFilesForRequest(requestId, files)
+      const inserted = await uploadFilesForRequest(requestId, files, kind)
       setDesignRequests((prev) =>
         prev.map((r) =>
           r.id === requestId
-            ? {
-                ...r,
-                design_request_attachments: [
-                  ...(r.design_request_attachments ?? []),
-                  ...inserted,
-                ],
-              }
+            ? { ...r, [embed]: [...(r[embed] ?? []), ...inserted] }
             : r
         )
       )
       setReqStatus({
         type: 'success',
-        message: `Attached ${inserted.length} file${inserted.length === 1 ? '' : 's'}.`,
+        message: `Uploaded ${inserted.length} file${inserted.length === 1 ? '' : 's'}.`,
       })
     } catch (err) {
-      console.error('Error uploading attachments:', err)
+      console.error('Error uploading files:', err)
       setReqStatus({ type: 'error', message: `Could not upload: ${err.message}` })
     }
-    setUploadingId(null)
+    setUploadingKey(null)
   }
 
   // Delete a stored file and its metadata row, then drop it from the row's list.
-  async function deleteAttachment(requestId, attachment) {
+  async function deleteFile(requestId, file, kind) {
     if (!supabase) return
+    const { bucket, table, embed } = FILE_KINDS[kind]
     const { error: rmErr } = await supabase.storage
-      .from(ATTACH_BUCKET)
-      .remove([attachment.storage_path])
+      .from(bucket)
+      .remove([file.storage_path])
     if (rmErr) {
       console.error('Error removing file from storage:', rmErr)
       setReqStatus({ type: 'error', message: `Could not delete file: ${rmErr.message}` })
       return
     }
-    const { error } = await supabase
-      .from('design_request_attachments')
-      .delete()
-      .eq('id', attachment.id)
+    const { error } = await supabase.from(table).delete().eq('id', file.id)
     if (error) {
-      console.error('Error deleting attachment row:', error)
+      console.error('Error deleting file row:', error)
       setReqStatus({ type: 'error', message: `Could not delete file: ${error.message}` })
       return
     }
     setDesignRequests((prev) =>
       prev.map((r) =>
         r.id === requestId
-          ? {
-              ...r,
-              design_request_attachments: (r.design_request_attachments ?? []).filter(
-                (a) => a.id !== attachment.id
-              ),
-            }
+          ? { ...r, [embed]: (r[embed] ?? []).filter((f) => f.id !== file.id) }
           : r
       )
     )
@@ -672,41 +677,56 @@ function DesignRequestsPage() {
           </td>
         </tr>
         <tr className="dr-attachments-row">
-          <td colSpan={7}>{renderAttachments(request)}</td>
+          <td colSpan={7}>
+            {renderFileSection(request, 'attachment', 'Attachments')}
+            {renderFileSection(
+              request,
+              'spec',
+              'Installation Specifications'
+            )}
+          </td>
         </tr>
       </Fragment>
     )
   }
 
-  // Attachment chips + drop zone shown beneath each request in read mode.
-  function renderAttachments(request) {
-    const files = request.design_request_attachments ?? []
+  // File chips + drop zone for one kind (attachments or installation specs),
+  // shown beneath each request in read mode.
+  function renderFileSection(request, kind, label) {
+    const { bucket, embed } = FILE_KINDS[kind]
+    const files = request[embed] ?? []
+    const busy = uploadingKey === `${kind}:${request.id}`
+    const emptyLabel =
+      kind === 'spec'
+        ? 'Drag & drop installation specs here, or click to upload'
+        : 'Drag & drop files here, or click to attach'
     return (
       <div className="dr-attachments">
         <span className="dr-attachments-label">
-          Attachments{files.length ? ` (${files.length})` : ''}
+          {label}
+          {files.length ? ` (${files.length})` : ''}
         </span>
         {files.length > 0 && (
           <ul className="attachment-list">
-            {files.map((att) => (
-              <li key={att.id} className="attachment-chip">
+            {files.map((f) => (
+              <li key={f.id} className="attachment-chip">
                 <a
-                  href={attachmentUrl(att.storage_path)}
+                  href={fileUrl(bucket, f.storage_path)}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  {att.file_name}
+                  {f.file_name}
                 </a>
-                {att.size_bytes != null && (
+                {f.size_bytes != null && (
                   <span className="attachment-size">
-                    {formatBytes(att.size_bytes)}
+                    {formatBytes(f.size_bytes)}
                   </span>
                 )}
                 <button
                   type="button"
                   className="attachment-remove"
-                  aria-label={`Delete ${att.file_name}`}
-                  onClick={() => deleteAttachment(request.id, att)}
+                  aria-label={`Delete ${f.file_name}`}
+                  onClick={() => deleteFile(request.id, f, kind)}
                 >
                   ✕
                 </button>
@@ -716,13 +736,9 @@ function DesignRequestsPage() {
         )}
         <FileDropzone
           compact
-          disabled={uploadingId === request.id}
-          onFiles={(dropped) => addFilesToRequest(request.id, dropped)}
-          label={
-            uploadingId === request.id
-              ? 'Uploading…'
-              : 'Drag & drop files here, or click to attach'
-          }
+          disabled={busy}
+          onFiles={(dropped) => addFilesToRequest(request.id, dropped, kind)}
+          label={busy ? 'Uploading…' : emptyLabel}
         />
       </div>
     )
@@ -784,9 +800,9 @@ function DesignRequestsPage() {
         </select>
         <FileDropzone
           onFiles={(files) => setPendingFiles((prev) => [...prev, ...files])}
-          disabled={uploadingId === 'new'}
+          disabled={uploadingKey === 'attachment:new'}
           label={
-            uploadingId === 'new'
+            uploadingKey === 'attachment:new'
               ? 'Uploading…'
               : 'Drag & drop files here, or click to attach'
           }

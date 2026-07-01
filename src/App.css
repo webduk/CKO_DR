@@ -448,6 +448,12 @@
   flex-direction: column;
   gap: 0.25rem;
 }
+/* Separate the two stacked file sections (Attachments + Installation Specs). */
+.dr-attachments + .dr-attachments {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
 .dr-attachments-label {
   font-size: 0.8rem;
   font-weight: 600;
