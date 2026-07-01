@@ -588,6 +588,33 @@
 .account-form .notes-field {
   grid-column: 1 / -1;
 }
+/* NEW LEAD checkbox: full-width row (checkbox beside its label) instead of the
+   stacked column the other fields use. */
+.account-form .checkbox-field {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.account-form .checkbox-field input {
+  width: auto;
+  padding: 0;
+}
+/* NEW LEAD table column. */
+.account-table .new-lead-cell {
+  text-align: center;
+}
+.new-lead-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
 
 .inline-create {
   display: flex;

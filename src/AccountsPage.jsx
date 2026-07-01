@@ -27,6 +27,7 @@ const EMPTY_FORM = {
   suburb: '',
   postcode: '',
   notes: '',
+  new_lead: false,
   ...Object.fromEntries(ROLE_FIELDS.map((f) => [f.key, ''])),
 }
 
@@ -181,6 +182,7 @@ function AccountsPage() {
       suburb: form.suburb.trim() || null,
       postcode: form.postcode.trim() || null,
       notes: form.notes.trim() || null,
+      new_lead: !!form.new_lead,
     }
     for (const f of ROLE_FIELDS) {
       payload[f.key] = form[f.key] ? Number(form[f.key]) : null
@@ -208,6 +210,7 @@ function AccountsPage() {
       suburb: account.suburb ?? '',
       postcode: account.postcode ?? '',
       notes: account.notes ?? '',
+      new_lead: account.new_lead ?? false,
       ...Object.fromEntries(
         ROLE_FIELDS.map((f) => [f.key, account[f.key] ?? ''])
       ),
@@ -236,6 +239,7 @@ function AccountsPage() {
       suburb: editForm.suburb.trim() || null,
       postcode: editForm.postcode.trim() || null,
       notes: editForm.notes.trim() || null,
+      new_lead: !!editForm.new_lead,
     }
     for (const f of ROLE_FIELDS) {
       payload[f.key] = editForm[f.key] ? Number(editForm[f.key]) : null
@@ -441,6 +445,14 @@ function AccountsPage() {
             placeholder="Any notes about this account"
           />
         </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={form.new_lead}
+            onChange={(e) => setField('new_lead', e.target.checked)}
+          />
+          NEW LEAD
+        </label>
         <button type="submit">Add Account</button>
         {status && (
           <p className={`form-status ${status.type}`}>{status.message}</p>
@@ -470,13 +482,14 @@ function AccountsPage() {
               <th key={f.key}>{f.label}</th>
             ))}
             <th>Notes</th>
+            <th>New Lead</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {sortedAccounts.length === 0 && (
             <tr>
-              <td className="empty" colSpan={6 + ROLE_FIELDS.length}>
+              <td className="empty" colSpan={7 + ROLE_FIELDS.length}>
                 {accounts.length === 0
                   ? 'No accounts yet'
                   : 'No accounts match your search'}
@@ -538,6 +551,14 @@ function AccountsPage() {
                     onChange={(e) => setEditField('notes', e.target.value)}
                   />
                 </td>
+                <td className="new-lead-cell">
+                  <input
+                    type="checkbox"
+                    aria-label="New Lead"
+                    checked={editForm.new_lead}
+                    onChange={(e) => setEditField('new_lead', e.target.checked)}
+                  />
+                </td>
                 <td className="row-actions">
                   <button type="button" onClick={() => saveEdit(account.id)}>
                     Save
@@ -557,6 +578,13 @@ function AccountsPage() {
                   <td key={f.key}>{account[f.alias]?.Name ?? '—'}</td>
                 ))}
                 <td>{account.notes ?? '—'}</td>
+                <td className="new-lead-cell">
+                  {account.new_lead ? (
+                    <span className="new-lead-badge">NEW LEAD</span>
+                  ) : (
+                    '—'
+                  )}
+                </td>
                 <td className="row-actions">
                   <button type="button" onClick={() => startEdit(account)}>
                     Edit
