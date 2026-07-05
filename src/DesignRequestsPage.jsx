@@ -85,6 +85,9 @@ function DesignRequestsPage() {
   // The new design request's lifecycle status ('active' | 'closed').
   const [reqStatusValue, setReqStatusValue] = useState('active')
   const [reqStatus, setReqStatus] = useState(null)
+  // The create form is hidden behind a large "Add Request" button until the
+  // user opens it, keeping the page compact by default.
+  const [showForm, setShowForm] = useState(false)
   // Files dropped on the create form before the record exists; uploaded right
   // after the design request is inserted (we need its id for the storage path).
   const [pendingFiles, setPendingFiles] = useState([])
@@ -93,6 +96,9 @@ function DesignRequestsPage() {
   // state on the matching drop zone so the two sections track independently.
   const [uploadingKey, setUploadingKey] = useState(null)
   const [query, setQuery] = useState('')
+  // Ids of design requests whose full record (long details + file sections) is
+  // expanded; collapsed rows show only the one-line summary.
+  const [expandedIds, setExpandedIds] = useState(() => new Set())
   // `editReqId` is the design request row currently in edit mode (null = none);
   // `editReq` holds its in-progress values until saved or cancelled.
   const [editReqId, setEditReqId] = useState(null)
@@ -561,8 +567,21 @@ function DesignRequestsPage() {
       }))
   }, [filtered])
 
+  function toggleExpanded(id) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   // Render a single design request as a table row (edit mode or read-only).
   function renderRequestRow(request) {
+    const expanded = expandedIds.has(request.id)
+    const fileCount =
+      (request.design_request_attachments?.length ?? 0) +
+      (request.design_request_install_specs?.length ?? 0)
     return editReqId === request.id ? (
       <tr key={request.id}>
         <td>
@@ -661,13 +680,29 @@ function DesignRequestsPage() {
           <td>{request.request_type?.name ?? '—'}</td>
           <td>{request.requestor_name}</td>
           <td className="dr-date">{request.request_date}</td>
-          <td>{request.details}</td>
+          <td
+            className={expanded ? 'dr-details' : 'dr-details dr-details--clamp'}
+          >
+            {request.details}
+          </td>
           <td>
             <span className={`status-badge status-badge--${request.status}`}>
               {STATUS_LABELS[request.status] ?? request.status}
             </span>
           </td>
           <td className="row-actions">
+            <button
+              type="button"
+              className="dr-expand-toggle"
+              aria-expanded={expanded}
+              onClick={() => toggleExpanded(request.id)}
+            >
+              {expanded
+                ? 'Collapse'
+                : fileCount
+                  ? `Expand (${fileCount})`
+                  : 'Expand'}
+            </button>
             <button type="button" onClick={() => startEditRequest(request)}>
               Edit
             </button>
@@ -676,16 +711,18 @@ function DesignRequestsPage() {
             </button>
           </td>
         </tr>
-        <tr className="dr-attachments-row">
-          <td colSpan={7}>
-            {renderFileSection(request, 'attachment', 'Attachments')}
-            {renderFileSection(
-              request,
-              'spec',
-              'Installation Specifications'
-            )}
-          </td>
-        </tr>
+        {expanded && (
+          <tr className="dr-attachments-row">
+            <td colSpan={7}>
+              {renderFileSection(request, 'attachment', 'Attachments')}
+              {renderFileSection(
+                request,
+                'spec',
+                'Installation Specifications'
+              )}
+            </td>
+          </tr>
+        )}
       </Fragment>
     )
   }
@@ -751,6 +788,17 @@ function DesignRequestsPage() {
       </Link>
       <h1>Design Requests</h1>
 
+      {!showForm && (
+        <button
+          type="button"
+          className="add-request-cta"
+          onClick={() => setShowForm(true)}
+        >
+          + Add Request
+        </button>
+      )}
+
+      {showForm && (
       <form className="design-request-form" onSubmit={addDesignRequest}>
         <select
           value={reqAccountId}
@@ -827,11 +875,23 @@ function DesignRequestsPage() {
             ))}
           </ul>
         )}
-        <button type="submit">Add Request</button>
+        <div className="design-request-form-actions">
+          <button type="submit" className="add-request-submit">
+            Add Request
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setShowForm(false)}
+          >
+            Cancel
+          </button>
+        </div>
         {reqStatus && (
           <p className={`form-status ${reqStatus.type}`}>{reqStatus.message}</p>
         )}
       </form>
+      )}
 
       <details className="request-type-manager">
         <summary>Manage request types</summary>

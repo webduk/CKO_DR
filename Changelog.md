@@ -13,3 +13,13 @@ cREATION OF new account leads. Icludes " referrer (from companies table) and per
 Can add color change for length of request ie GREEN card = < 7 days, Organge card =<2 weeks, Red =? 2week,\>>
 
 Completed cards are removed from the active design request sub page. 
+
+# INstallation specification repository
+Need somewhere to store and file completed install specs. Ideally include version control. 
+
+# Copy inspection reports to folders
+Need to copy all ispections reports. Use Claude co-work to download and sort this. 
+
+## 26-7-02
+compacted the design request table and added drop down.
+To add free form search

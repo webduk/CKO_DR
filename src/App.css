@@ -272,6 +272,33 @@
   font: inherit;
 }
 
+/* Large primary button that reveals the (hidden-by-default) create form. */
+.add-request-cta {
+  margin-top: 1rem;
+  padding: 0.85rem 1.9rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  background: #2d6cdf;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.add-request-cta:hover {
+  filter: brightness(1.08);
+}
+.design-request-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* The form's submit stays the prominent "Add Request" action, enlarged to match. */
+.add-request-submit {
+  padding: 0.6rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
 .design-requests-page {
   max-width: 64rem;
   margin: 0 auto;
@@ -453,6 +480,14 @@
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+}
+/* Collapsed rows show only the first line of the details, ellipsised, so every
+   record stays a single compact line until expanded. */
+.dr-details--clamp {
+  max-width: 32rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dr-attachments-label {
   font-size: 0.8rem;
