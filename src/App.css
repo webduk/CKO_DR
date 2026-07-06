@@ -356,42 +356,172 @@
   gap: 0.4rem;
 }
 
+/* Search + priority/status filter dropdowns above the table. */
+.design-request-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
 .design-request-search {
   font: inherit;
-  width: 100%;
+  flex: 1 1 16rem;
   max-width: 28rem;
   box-sizing: border-box;
   padding: 0.5rem 0.6rem;
-  margin-top: 1.5rem;
+}
+
+.design-request-filter {
+  font: inherit;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+}
+
+/* "Add Request" + "Modify Request" sit side by side, centered. */
+.design-request-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Top-level toggle that reveals the per-row Modify buttons. Fuchsia. */
+.modify-request-toggle {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid #c026d3;
+  border-radius: 8px;
+  background: #c026d3;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s, background 0.15s, border-color 0.15s;
+}
+.modify-request-toggle:hover {
+  filter: brightness(1.08);
+}
+.modify-request-toggle.active {
+  background: #86198f;
+  border-color: #86198f;
+}
+
+/* Per-row Modify button, revealed only while modify mode is on. */
+.dr-modify-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dr-modify-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+/* Card wrapper around the summary table (rounded, subtle border + shadow). */
+.dr-table-card {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow: var(--shadow);
 }
 
 .design-request-table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 1rem;
   text-align: left;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 .design-request-table .dr-date {
+  white-space: nowrap;
+  color: var(--text);
+}
+/* Keep each requestor's name on a single line (no wrapping). */
+.design-request-table .dr-requestor {
   white-space: nowrap;
 }
 
 .design-request-table th,
 .design-request-table td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
+}
+.design-request-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.design-request-table th {
+/* Column headers: small, uppercase, muted, letter-spaced. */
+.design-request-table thead th {
   font-weight: 600;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: color-mix(in srgb, var(--border) 8%, transparent);
+}
+
+.design-request-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--border) 10%, transparent);
 }
 
 .design-request-table .month-group th {
   background: var(--accent-bg);
   color: var(--accent);
-  font-size: 0.85rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
+}
+
+/* Request-type pill with a leading dot (mirrors the priority badge). */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent, #646cff) 12%, transparent);
+  color: var(--accent, #4f46e5);
+}
+.type-badge::before {
+  content: '';
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Leading traffic-light dot on the priority badges. Selector is doubled up so
+   it beats the later, equal-specificity `.status-badge { display: inline-block }`. */
+.status-badge.priority-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.priority-badge::before {
+  content: '';
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 /* --- File attachments / drag-and-drop --- */
@@ -510,6 +640,11 @@
 .design-request-table td.empty {
   text-align: center;
   opacity: 0.6;
+}
+
+.home-title-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .nav-buttons {
@@ -968,6 +1103,46 @@
 .status-badge--closed {
   background: #e5e7eb;
   color: #4b5563;
+}
+
+/* Priority badges (shares the .status-badge pill shape). */
+.priority-badge--critical {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.priority-badge--mid {
+  background: #fef3c7;
+  color: #92400e;
+}
+.priority-badge--low {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Full-width inline editor revealed by the single Edit button. */
+.dr-editor-row td {
+  background: color-mix(in srgb, var(--border) 12%, transparent);
+}
+.dr-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  padding: 0.5rem 0.25rem;
+}
+.dr-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.dr-editor-field--full {
+  grid-column: 1 / -1;
+}
+.dr-editor-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
 }
 .map-notice {
   padding: 1rem;

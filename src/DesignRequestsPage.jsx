@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
-import { Link } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
 
@@ -15,8 +14,16 @@ const STATUS_OPTIONS = [
   { value: 'on_hold', label: 'On Hold' },
   { value: 'closed', label: 'Closed' },
 ]
-const STATUS_LABELS = Object.fromEntries(
-  STATUS_OPTIONS.map((s) => [s.value, s.label])
+
+// Priority levels for a design request, most urgent first. New rows default to
+// 'mid' (see supabase/design_request_priority.sql).
+const PRIORITY_OPTIONS = [
+  { value: 'critical', label: 'Critical' },
+  { value: 'mid', label: 'Mid' },
+  { value: 'low', label: 'Low' },
+]
+const PRIORITY_LABELS = Object.fromEntries(
+  PRIORITY_OPTIONS.map((p) => [p.value, p.label])
 )
 
 // The two kinds of files that attach to a design request. Each has its own
@@ -73,6 +80,15 @@ function monthLabel(dateStr) {
   return `${MONTH_NAMES[idx]} ${year}`
 }
 
+// "16 Jun 2026" from an ISO date string. Parsed off the string (not via
+// `new Date()`) to avoid a timezone shift rolling the day backwards.
+function formatDate(dateStr) {
+  const [year, month, day] = (dateStr ?? '').split('-')
+  const idx = Number(month) - 1
+  if (!year || !day || idx < 0 || idx > 11) return dateStr ?? '—'
+  return `${Number(day)} ${MONTH_NAMES[idx].slice(0, 3)} ${year}`
+}
+
 function DesignRequestsPage() {
   const [accounts, setAccounts] = useState([])
   const [requestTypes, setRequestTypes] = useState([])
@@ -84,6 +100,8 @@ function DesignRequestsPage() {
   const [reqDetails, setReqDetails] = useState('')
   // The new design request's lifecycle status ('active' | 'closed').
   const [reqStatusValue, setReqStatusValue] = useState('active')
+  // The new design request's priority ('critical' | 'mid' | 'low').
+  const [reqPriorityValue, setReqPriorityValue] = useState('mid')
   const [reqStatus, setReqStatus] = useState(null)
   // The create form is hidden behind a large "Add Request" button until the
   // user opens it, keeping the page compact by default.
@@ -96,9 +114,15 @@ function DesignRequestsPage() {
   // state on the matching drop zone so the two sections track independently.
   const [uploadingKey, setUploadingKey] = useState(null)
   const [query, setQuery] = useState('')
-  // Ids of design requests whose full record (long details + file sections) is
-  // expanded; collapsed rows show only the one-line summary.
-  const [expandedIds, setExpandedIds] = useState(() => new Set())
+  // Filter dropdowns above the table: 'all' shows everything, otherwise a
+  // specific priority ('critical' | 'mid' | 'low') or status ('active' |
+  // 'on_hold'). Closed rows are always hidden regardless.
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  // When true, each record row shows a "Modify" button in its Actions column.
+  // Toggled by the "Modify Request" button above the table; off by default so
+  // the table reads as a clean at-a-glance summary.
+  const [modifyMode, setModifyMode] = useState(false)
   // `editReqId` is the design request row currently in edit mode (null = none);
   // `editReq` holds its in-progress values until saved or cancelled.
   const [editReqId, setEditReqId] = useState(null)
@@ -109,6 +133,7 @@ function DesignRequestsPage() {
     request_date: '',
     details: '',
     status: 'active',
+    priority: 'mid',
   })
   // Inline management of the Request Type option list (add/rename/delete).
   const [newTypeName, setNewTypeName] = useState('')
@@ -181,6 +206,7 @@ function DesignRequestsPage() {
         request_date: reqDate,
         details,
         status: reqStatusValue,
+        priority: reqPriorityValue,
       })
       .select(REQUEST_SELECT)
       .single()
@@ -216,6 +242,7 @@ function DesignRequestsPage() {
     setReqDate('')
     setReqDetails('')
     setReqStatusValue('active')
+    setReqPriorityValue('mid')
     setPendingFiles([])
     setReqStatus(
       attachError
@@ -325,6 +352,7 @@ function DesignRequestsPage() {
       request_date: request.request_date ?? '',
       details: request.details ?? '',
       status: request.status ?? 'active',
+      priority: request.priority ?? 'mid',
     })
     setReqStatus(null)
   }
@@ -360,6 +388,7 @@ function DesignRequestsPage() {
         request_date: editReq.request_date,
         details,
         status: editReq.status,
+        priority: editReq.priority,
       })
       .eq('id', id)
       .select(REQUEST_SELECT)
@@ -386,38 +415,8 @@ function DesignRequestsPage() {
     setReqStatus({ type: 'success', message: 'Design record successfully updated.' })
   }
 
-  // One-click close (archive) without entering edit mode. Closing flips status
-  // to 'closed', which drops the row out of the visible list. To reopen or set
-  // "On Hold", use Edit and pick the status there.
-  async function closeRequest(request) {
-    if (!supabase) return
-    const { data, error } = await supabase
-      .from('design_requests')
-      .update({ status: 'closed' })
-      .eq('id', request.id)
-      .select(REQUEST_SELECT)
-    if (error) {
-      console.error('Error updating status:', error)
-      setReqStatus({
-        type: 'error',
-        message: `Could not update status: ${error.message}`,
-      })
-      return
-    }
-    if (!data || data.length === 0) {
-      setReqStatus({
-        type: 'error',
-        message:
-          'Status change was blocked by the database (no row changed). Check the ' +
-          'Supabase Row-Level Security UPDATE policy on the design_requests table.',
-      })
-      return
-    }
-    setDesignRequests((prev) =>
-      prev.map((r) => (r.id === request.id ? data[0] : r))
-    )
-    setReqStatus({ type: 'success', message: 'Request closed.' })
-  }
+  // To close (archive) a request, open Edit and set its status to "Closed";
+  // closed rows drop out of the visible list.
 
   // --- Request Type option management (add / rename / delete) ---
 
@@ -529,15 +528,21 @@ function DesignRequestsPage() {
   // Closed requests are archived: only active / on-hold rows are shown.
   // Search by site (USI), requestor and details, case-insensitive.
   const filtered = useMemo(() => {
-    const visible = designRequests.filter((r) => r.status !== 'closed')
+    let visible = designRequests.filter((r) => r.status !== 'closed')
+    if (priorityFilter !== 'all') {
+      visible = visible.filter((r) => (r.priority ?? 'mid') === priorityFilter)
+    }
+    if (statusFilter !== 'all') {
+      visible = visible.filter((r) => r.status === statusFilter)
+    }
     const q = query.trim().toLowerCase()
     if (!q) return visible
     return visible.filter((r) =>
-      [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date, r.status]
+      [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date, r.status, r.priority]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     )
-  }, [designRequests, query])
+  }, [designRequests, query, priorityFilter, statusFilter])
 
   // Group the visible rows by calendar month, earliest month first, with the
   // earliest dates at the top of each group; rows with no/invalid date fall into
@@ -567,163 +572,153 @@ function DesignRequestsPage() {
       }))
   }, [filtered])
 
-  function toggleExpanded(id) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  // Render a single design request as a table row (edit mode or read-only).
+  // Render a single design request. Read mode is a compact at-a-glance summary
+  // row (priority, request type, date, details + a single Edit button). Edit
+  // mode expands to a full-width editor row holding every field, the status and
+  // the file sections.
   function renderRequestRow(request) {
-    const expanded = expandedIds.has(request.id)
-    const fileCount =
-      (request.design_request_attachments?.length ?? 0) +
-      (request.design_request_install_specs?.length ?? 0)
     return editReqId === request.id ? (
-      <tr key={request.id}>
-        <td>
-          <select
-            value={editReq.account_id}
-            onChange={(e) =>
-              setEditReq((p) => ({ ...p, account_id: e.target.value }))
-            }
-          >
-            <option value="">Select a site (account)…</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.usi}
-              </option>
-            ))}
-          </select>
-        </td>
-        <td>
-          <select
-            value={editReq.request_type_id}
-            onChange={(e) =>
-              setEditReq((p) => ({
-                ...p,
-                request_type_id: e.target.value,
-              }))
-            }
-          >
-            <option value="">Select a request type…</option>
-            {requestTypes.map((type) => (
-              <option key={type.id} value={type.id}>
-                {type.name}
-              </option>
-            ))}
-          </select>
-        </td>
-        <td>
-          <input
-            type="text"
-            value={editReq.requestor_name}
-            onChange={(e) =>
-              setEditReq((p) => ({
-                ...p,
-                requestor_name: e.target.value,
-              }))
-            }
-          />
-        </td>
-        <td>
-          <input
-            type="date"
-            value={editReq.request_date}
-            onChange={(e) =>
-              setEditReq((p) => ({
-                ...p,
-                request_date: e.target.value,
-              }))
-            }
-          />
-        </td>
-        <td>
-          <textarea
-            value={editReq.details}
-            onChange={(e) =>
-              setEditReq((p) => ({ ...p, details: e.target.value }))
-            }
-            rows={2}
-          />
-        </td>
-        <td>
-          <select
-            value={editReq.status}
-            onChange={(e) =>
-              setEditReq((p) => ({ ...p, status: e.target.value }))
-            }
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </td>
-        <td className="row-actions">
-          <button type="button" onClick={() => saveEditRequest(request.id)}>
-            Save
-          </button>
-          <button type="button" onClick={cancelEditRequest}>
-            Cancel
-          </button>
+      <tr key={request.id} className="dr-editor-row">
+        <td colSpan={6}>
+          <div className="dr-editor">
+            <label className="dr-editor-field">
+              <span>Site (account)</span>
+              <select
+                value={editReq.account_id}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, account_id: e.target.value }))
+                }
+              >
+                <option value="">Select a site (account)…</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.usi}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dr-editor-field">
+              <span>Request Type</span>
+              <select
+                value={editReq.request_type_id}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, request_type_id: e.target.value }))
+                }
+              >
+                <option value="">Select a request type…</option>
+                {requestTypes.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dr-editor-field">
+              <span>Requestor</span>
+              <input
+                type="text"
+                value={editReq.requestor_name}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, requestor_name: e.target.value }))
+                }
+              />
+            </label>
+            <label className="dr-editor-field">
+              <span>Priority</span>
+              <select
+                value={editReq.priority}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, priority: e.target.value }))
+                }
+              >
+                {PRIORITY_OPTIONS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dr-editor-field">
+              <span>Date</span>
+              <input
+                type="date"
+                value={editReq.request_date}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, request_date: e.target.value }))
+                }
+              />
+            </label>
+            <label className="dr-editor-field">
+              <span>Status</span>
+              <select
+                value={editReq.status}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, status: e.target.value }))
+                }
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="dr-editor-field dr-editor-field--full">
+              <span>Details</span>
+              <textarea
+                value={editReq.details}
+                onChange={(e) =>
+                  setEditReq((p) => ({ ...p, details: e.target.value }))
+                }
+                rows={3}
+              />
+            </label>
+            <div className="dr-editor-field--full">
+              {renderFileSection(request, 'attachment', 'Attachments')}
+              {renderFileSection(request, 'spec', 'Installation Specifications')}
+            </div>
+            <div className="row-actions dr-editor-actions">
+              <button type="button" onClick={() => saveEditRequest(request.id)}>
+                Save
+              </button>
+              <button type="button" onClick={cancelEditRequest}>
+                Cancel
+              </button>
+            </div>
+          </div>
         </td>
       </tr>
     ) : (
-      <Fragment key={request.id}>
-        <tr>
-          <td>{request.accounts?.usi ?? '—'}</td>
-          <td>{request.request_type?.name ?? '—'}</td>
-          <td>{request.requestor_name}</td>
-          <td className="dr-date">{request.request_date}</td>
-          <td
-            className={expanded ? 'dr-details' : 'dr-details dr-details--clamp'}
+      <tr key={request.id}>
+        <td>
+          <span
+            className={`status-badge priority-badge priority-badge--${request.priority ?? 'mid'}`}
           >
-            {request.details}
-          </td>
-          <td>
-            <span className={`status-badge status-badge--${request.status}`}>
-              {STATUS_LABELS[request.status] ?? request.status}
-            </span>
-          </td>
-          <td className="row-actions">
+            {PRIORITY_LABELS[request.priority] ?? request.priority ?? '—'}
+          </span>
+        </td>
+        <td>
+          {request.request_type?.name ? (
+            <span className="type-badge">{request.request_type.name}</span>
+          ) : (
+            '—'
+          )}
+        </td>
+        <td className="dr-requestor">{request.requestor_name ?? '—'}</td>
+        <td className="dr-date">{formatDate(request.request_date)}</td>
+        <td className="dr-details dr-details--clamp">{request.details}</td>
+        <td className="row-actions">
+          {modifyMode && (
             <button
               type="button"
-              className="dr-expand-toggle"
-              aria-expanded={expanded}
-              onClick={() => toggleExpanded(request.id)}
+              className="dr-modify-btn"
+              onClick={() => startEditRequest(request)}
             >
-              {expanded
-                ? 'Collapse'
-                : fileCount
-                  ? `Expand (${fileCount})`
-                  : 'Expand'}
+              Modify
             </button>
-            <button type="button" onClick={() => startEditRequest(request)}>
-              Edit
-            </button>
-            <button type="button" onClick={() => closeRequest(request)}>
-              Close
-            </button>
-          </td>
-        </tr>
-        {expanded && (
-          <tr className="dr-attachments-row">
-            <td colSpan={7}>
-              {renderFileSection(request, 'attachment', 'Attachments')}
-              {renderFileSection(
-                request,
-                'spec',
-                'Installation Specifications'
-              )}
-            </td>
-          </tr>
-        )}
-      </Fragment>
+          )}
+        </td>
+      </tr>
     )
   }
 
@@ -782,20 +777,33 @@ function DesignRequestsPage() {
   }
 
   return (
-    <main className="design-requests-page">
-      <Link to="/" className="back-link">
-        ← Back to home
-      </Link>
+    <section id="design-requests" className="design-requests-page">
       <h1>Design Requests</h1>
 
       {!showForm && (
-        <button
-          type="button"
-          className="add-request-cta"
-          onClick={() => setShowForm(true)}
-        >
-          + Add Request
-        </button>
+        <div className="design-request-actions">
+          <button
+            type="button"
+            className="add-request-cta"
+            onClick={() => setShowForm(true)}
+          >
+            + Add Request
+          </button>
+          <button
+            type="button"
+            className={`modify-request-toggle${modifyMode ? ' active' : ''}`}
+            aria-pressed={modifyMode}
+            onClick={() =>
+              setModifyMode((m) => {
+                // Leaving modify mode cancels any half-finished row edit.
+                if (m) setEditReqId(null)
+                return !m
+              })
+            }
+          >
+            {modifyMode ? 'Done' : 'Modify Request'}
+          </button>
+        </div>
       )}
 
       {showForm && (
@@ -836,6 +844,16 @@ function DesignRequestsPage() {
           placeholder="Details for request"
           rows={3}
         />
+        <select
+          value={reqPriorityValue}
+          onChange={(e) => setReqPriorityValue(e.target.value)}
+        >
+          {PRIORITY_OPTIONS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label} priority
+            </option>
+          ))}
+        </select>
         <select
           value={reqStatusValue}
           onChange={(e) => setReqStatusValue(e.target.value)}
@@ -948,30 +966,56 @@ function DesignRequestsPage() {
         )}
       </details>
 
-      <input
-        type="search"
-        className="design-request-search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by site, requestor or details…"
-      />
+      <div className="design-request-filters">
+        <input
+          type="search"
+          className="design-request-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by site, requestor or details…"
+        />
+        <select
+          className="design-request-filter"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+        >
+          <option value="all">All priorities</option>
+          {PRIORITY_OPTIONS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="design-request-filter"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="all">All statuses</option>
+          {STATUS_OPTIONS.filter((s) => s.value !== 'closed').map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
+      <div className="dr-table-card">
       <table className="design-request-table">
         <thead>
           <tr>
-            <th>Site</th>
+            <th>Priority</th>
             <th>Request Type</th>
             <th>Requestor</th>
             <th>Date</th>
             <th>Details</th>
-            <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {filtered.length === 0 && (
             <tr>
-              <td className="empty" colSpan={7}>
+              <td className="empty" colSpan={6}>
                 {query
                   ? `No design requests match “${query}”`
                   : 'No active or on-hold design requests'}
@@ -981,7 +1025,7 @@ function DesignRequestsPage() {
           {monthGroups.map((group) => (
             <Fragment key={group.key}>
               <tr className="month-group">
-                <th colSpan={7} scope="colgroup">
+                <th colSpan={6} scope="colgroup">
                   {group.label}
                 </th>
               </tr>
@@ -990,7 +1034,8 @@ function DesignRequestsPage() {
           ))}
         </tbody>
       </table>
-    </main>
+      </div>
+    </section>
   )
 }
 

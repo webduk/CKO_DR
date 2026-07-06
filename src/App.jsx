@@ -4,6 +4,7 @@ import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
 import supabase from './supabase-client';
+import DesignRequestsPage from './DesignRequestsPage'
 
 // Companies shown as colour-coded active-design-request count widgets under the
 // main blue widget. Requests link to a company directly via company_id.
@@ -121,7 +122,9 @@ function App() {
 
       <section id="center">
         <div>
-          <h1>CKO</h1>
+          <Link to="/" className="home-title-link">
+            <h1>CKO</h1>
+          </Link>
         </div>
         <nav className="nav-buttons">
           <Link to="/accounts/new" className="nav-button">
@@ -139,17 +142,17 @@ function App() {
           <Link to="/companies" className="nav-button">
             Manage Companies
           </Link>
-          <Link to="/design-requests" className="nav-button">
+          <a href="#design-requests" className="nav-button">
             Design Requests
-          </Link>
+          </a>
         </nav>
 
-        <Link to="/design-requests" className="stat-widget">
+        <a href="#design-requests" className="stat-widget">
           <span className="stat-number">
             {designRequestCount ?? '—'}
           </span>
           <span className="stat-label">Active Design Requests</span>
-        </Link>
+        </a>
 
         <div className="report-widgets">
           {widgetCounts.map((w) => (
@@ -163,6 +166,10 @@ function App() {
           ))}
         </div>
       </section>
+
+      <div className="ticks"></div>
+
+      <DesignRequestsPage />
 
       <div className="ticks"></div>
 
