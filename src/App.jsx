@@ -142,9 +142,12 @@ function App() {
           <Link to="/companies" className="nav-button">
             Manage Companies
           </Link>
-          <a href="#design-requests" className="nav-button">
-            Design Requests
-          </a>
+          <Link to="/leads" className="nav-button">
+            New Leads
+          </Link>
+          <Link to="/design-requests" className="nav-button">
+            All Design Requests
+          </Link>
         </nav>
 
         <a href="#design-requests" className="stat-widget">

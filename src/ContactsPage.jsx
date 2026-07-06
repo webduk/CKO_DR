@@ -110,14 +110,34 @@ function ContactsPage() {
     }
   }
 
-  async function deleteContact(id) {
+  async function deleteContact(contact) {
     if (!supabase) return
-    const { error } = await supabase.from('contacts').delete().eq('id', id)
+    const label = contact.name?.trim() || 'this contact'
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
+    // Chain .select() so the response carries the deleted rows: zero rows back
+    // (with no error) means an RLS DELETE policy silently blocked the write, so
+    // we must not remove it from the table as if it were gone.
+    const { data, error } = await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', contact.id)
+      .select('id')
     if (error) {
       console.error('Error deleting contact:', error)
+      setStatus({ type: 'error', message: `Could not delete: ${error.message}` })
       return
     }
-    setContacts((prev) => prev.filter((c) => c.id !== id))
+    if (!data || data.length === 0) {
+      setStatus({
+        type: 'error',
+        message:
+          'Delete was blocked by the database (no row removed). Check the ' +
+          'Supabase Row-Level Security DELETE policy on the contacts table.',
+      })
+      return
+    }
+    setContacts((prev) => prev.filter((c) => c.id !== contact.id))
+    setStatus({ type: 'success', message: `Contact “${label}” deleted.` })
   }
 
   return (
@@ -250,7 +270,7 @@ function ContactsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteContact(contact.id)}
+                      onClick={() => deleteContact(contact)}
                     >
                       Delete
                     </button>

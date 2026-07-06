@@ -8,6 +8,8 @@ import ContactsPage from './ContactsPage.jsx'
 import MapPage from './MapPage.jsx'
 import AccountsReportPage from './AccountsReportPage.jsx'
 import CompaniesPage from './CompaniesPage.jsx'
+import LeadsPage from './LeadsPage.jsx'
+import DesignRequestsAllPage from './DesignRequestsAllPage.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -19,6 +21,8 @@ createRoot(document.getElementById('root')).render(
         <Route path="/accounts/map" element={<MapPage />} />
         <Route path="/accounts/report" element={<AccountsReportPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
+        <Route path="/leads" element={<LeadsPage />} />
+        <Route path="/design-requests" element={<DesignRequestsAllPage />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

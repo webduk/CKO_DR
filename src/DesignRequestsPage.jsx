@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
 
@@ -70,16 +71,6 @@ function formatBytes(bytes) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`
 }
 
-// Derive a "June 2026" label from an ISO date string ("2026-06-20"). We read the
-// year/month off the string directly rather than via `new Date()` to avoid the
-// timezone shift that can roll a date back into the previous month.
-function monthLabel(dateStr) {
-  const [year, month] = (dateStr ?? '').split('-')
-  const idx = Number(month) - 1
-  if (!year || idx < 0 || idx > 11) return 'No date'
-  return `${MONTH_NAMES[idx]} ${year}`
-}
-
 // "16 Jun 2026" from an ISO date string. Parsed off the string (not via
 // `new Date()`) to avoid a timezone shift rolling the day backwards.
 function formatDate(dateStr) {
@@ -87,6 +78,15 @@ function formatDate(dateStr) {
   const idx = Number(month) - 1
   if (!year || !day || idx < 0 || idx > 11) return dateStr ?? '—'
   return `${Number(day)} ${MONTH_NAMES[idx].slice(0, 3)} ${year}`
+}
+
+// Today's local date as "YYYY-MM-DD", used to stamp closed_at. Built from the
+// local calendar parts so it matches the day the user sees (no UTC rollover).
+function todayISO() {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
 }
 
 function DesignRequestsPage() {
@@ -207,6 +207,7 @@ function DesignRequestsPage() {
         details,
         status: reqStatusValue,
         priority: reqPriorityValue,
+        closed_at: reqStatusValue === 'closed' ? todayISO() : null,
       })
       .select(REQUEST_SELECT)
       .single()
@@ -376,6 +377,15 @@ function DesignRequestsPage() {
       })
       return
     }
+    // Stamp closed_at when this save closes the request; keep the existing date
+    // if it was already closed, and clear it if the request is being reopened.
+    const prev = designRequests.find((r) => r.id === id)
+    const closed_at =
+      editReq.status === 'closed'
+        ? prev?.status === 'closed'
+          ? prev.closed_at ?? todayISO()
+          : todayISO()
+        : null
     const { data, error } = await supabase
       .from('design_requests')
       .update({
@@ -386,6 +396,7 @@ function DesignRequestsPage() {
           : null,
         requestor_name: requestor,
         request_date: editReq.request_date,
+        closed_at,
         details,
         status: editReq.status,
         priority: editReq.priority,
@@ -415,8 +426,119 @@ function DesignRequestsPage() {
     setReqStatus({ type: 'success', message: 'Design record successfully updated.' })
   }
 
-  // To close (archive) a request, open Edit and set its status to "Closed";
-  // closed rows drop out of the visible list.
+  // Permanently delete a design request (unlike Close, which only archives).
+  // The FK from both attachment tables is ON DELETE CASCADE, so their metadata
+  // rows go automatically — but the Storage objects are not cascaded, so we
+  // remove those first (best-effort) to avoid orphaned files.
+  async function deleteDesignRequest(request) {
+    if (!supabase) return
+    if (
+      !window.confirm(
+        'Do you really wish to make this change?\n\n' +
+          'This permanently deletes the design request and any attached files, ' +
+          'and cannot be undone. Click OK to confirm.'
+      )
+    ) {
+      return
+    }
+    for (const [kind, embed] of [
+      ['attachment', 'design_request_attachments'],
+      ['spec', 'design_request_install_specs'],
+    ]) {
+      const paths = (request[embed] ?? [])
+        .map((f) => f.storage_path)
+        .filter(Boolean)
+      if (paths.length) {
+        const { error: rmErr } = await supabase.storage
+          .from(FILE_KINDS[kind].bucket)
+          .remove(paths)
+        if (rmErr) console.error(`Error removing ${kind} files:`, rmErr)
+      }
+    }
+    // .select('id') so zero rows back (with no error) reveals an RLS DELETE
+    // policy silently blocking the write instead of a false success.
+    const { data, error } = await supabase
+      .from('design_requests')
+      .delete()
+      .eq('id', request.id)
+      .select('id')
+    if (error) {
+      console.error('Error deleting design request:', error)
+      setReqStatus({ type: 'error', message: `Could not delete: ${error.message}` })
+      return
+    }
+    if (!data || data.length === 0) {
+      setReqStatus({
+        type: 'error',
+        message:
+          'Delete was blocked by the database (no row removed). Check the ' +
+          'Supabase Row-Level Security DELETE policy on the design_requests table.',
+      })
+      return
+    }
+    setDesignRequests((prev) => prev.filter((r) => r.id !== request.id))
+    if (editReqId === request.id) setEditReqId(null)
+    setReqStatus({ type: 'success', message: 'Design request deleted.' })
+  }
+
+  // One-click close from a row's own button: confirm, then archive it. Closing
+  // drops the row off the home summary; it stays available on the All Design
+  // Requests page.
+  async function closeRequest(request) {
+    if (request.status === 'closed') return
+    if (
+      !window.confirm(
+        'Do you really wish to make this change?\n\n' +
+          'This closes the design request and removes it from the home page ' +
+          '(it stays on the All Design Requests page). Click OK to confirm.'
+      )
+    ) {
+      return
+    }
+    await updateStatus(request, 'closed')
+  }
+
+  // Change just a request's status from the inline dropdown shown in modify
+  // mode (no need to open the full editor). Setting it to 'closed' archives the
+  // row, which drops it out of the visible list.
+  async function updateStatus(request, status) {
+    if (!supabase || status === request.status) return
+    // Stamp the close date when archiving; clear it when reopening. (This is
+    // only reached on an actual status change, so a fresh date is always right.)
+    const closed_at = status === 'closed' ? todayISO() : null
+    const { data, error } = await supabase
+      .from('design_requests')
+      .update({ status, closed_at })
+      .eq('id', request.id)
+      .select(REQUEST_SELECT)
+    if (error) {
+      console.error('Error updating status:', error)
+      setReqStatus({
+        type: 'error',
+        message: `Could not update status: ${error.message}`,
+      })
+      return
+    }
+    if (!data || data.length === 0) {
+      setReqStatus({
+        type: 'error',
+        message:
+          'Status change was blocked by the database (no row changed). Check the ' +
+          'Supabase Row-Level Security UPDATE policy on the design_requests table.',
+      })
+      return
+    }
+    setDesignRequests((prev) =>
+      prev.map((r) => (r.id === request.id ? data[0] : r))
+    )
+    setReqStatus({
+      type: 'success',
+      message:
+        status === 'closed'
+          ? `Request closed on ${formatDate(closed_at)}.`
+          : 'Status updated.',
+    })
+  }
 
   // --- Request Type option management (add / rename / delete) ---
 
@@ -544,32 +666,16 @@ function DesignRequestsPage() {
     )
   }, [designRequests, query, priorityFilter, statusFilter])
 
-  // Group the visible rows by calendar month, earliest month first, with the
-  // earliest dates at the top of each group; rows with no/invalid date fall into
-  // a trailing "No date" group. Keyed by "YYYY-MM" so the sort is a plain string
-  // compare.
-  const monthGroups = useMemo(() => {
-    const map = new Map()
-    for (const r of filtered) {
-      const key = monthLabel(r.request_date) === 'No date'
-        ? ''
-        : r.request_date.slice(0, 7)
-      if (!map.has(key)) map.set(key, [])
-      map.get(key).push(r)
-    }
-    return [...map.entries()]
-      .sort(([a], [b]) => {
-        if (a === '') return 1
-        if (b === '') return -1
-        return a.localeCompare(b)
-      })
-      .map(([key, rows]) => ({
-        key: key || 'no-date',
-        label: monthLabel(rows[0].request_date),
-        rows: [...rows].sort((x, y) =>
-          (x.request_date ?? '').localeCompare(y.request_date ?? '')
-        ),
-      }))
+  // Flat list sorted by date (earliest first); rows with no/invalid date sort
+  // last. A compact single table, matching the All Design Requests page.
+  const sortedRequests = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const da = a.request_date ?? ''
+      const db = b.request_date ?? ''
+      if (!da) return 1
+      if (!db) return -1
+      return da.localeCompare(db)
+    })
   }, [filtered])
 
   // Render a single design request. Read mode is a compact at-a-glance summary
@@ -684,6 +790,13 @@ function DesignRequestsPage() {
               <button type="button" onClick={cancelEditRequest}>
                 Cancel
               </button>
+              <button
+                type="button"
+                className="dr-delete-btn"
+                onClick={() => deleteDesignRequest(request)}
+              >
+                Delete
+              </button>
             </div>
           </div>
         </td>
@@ -706,16 +819,48 @@ function DesignRequestsPage() {
         </td>
         <td className="dr-requestor">{request.requestor_name ?? '—'}</td>
         <td className="dr-date">{formatDate(request.request_date)}</td>
-        <td className="dr-details dr-details--clamp">{request.details}</td>
+        <td className="dr-details">
+          <span className="dr-details-clamp" title={request.details}>
+            {request.details}
+          </span>
+        </td>
         <td className="row-actions">
+          <button
+            type="button"
+            className="dr-close-btn"
+            onClick={() => closeRequest(request)}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="dr-delete-btn"
+            onClick={() => deleteDesignRequest(request)}
+          >
+            Delete
+          </button>
           {modifyMode && (
-            <button
-              type="button"
-              className="dr-modify-btn"
-              onClick={() => startEditRequest(request)}
-            >
-              Modify
-            </button>
+            <>
+              <select
+                className="dr-status-select"
+                value={request.status}
+                aria-label="Change status"
+                onChange={(e) => updateStatus(request, e.target.value)}
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="dr-modify-btn"
+                onClick={() => startEditRequest(request)}
+              >
+                Modify
+              </button>
+            </>
           )}
         </td>
       </tr>
@@ -779,6 +924,11 @@ function DesignRequestsPage() {
   return (
     <section id="design-requests" className="design-requests-page">
       <h1>Design Requests</h1>
+      <p className="page-intro">
+        Active and on-hold requests. Closing a request removes it from here —
+        find every request, including closed ones, on the{' '}
+        <Link to="/design-requests">All Design Requests</Link> page.
+      </p>
 
       {!showForm && (
         <div className="design-request-actions">
@@ -1022,16 +1172,7 @@ function DesignRequestsPage() {
               </td>
             </tr>
           )}
-          {monthGroups.map((group) => (
-            <Fragment key={group.key}>
-              <tr className="month-group">
-                <th colSpan={6} scope="colgroup">
-                  {group.label}
-                </th>
-              </tr>
-              {group.rows.map((request) => renderRequestRow(request))}
-            </Fragment>
-          ))}
+          {sortedRequests.map((request) => renderRequestRow(request))}
         </tbody>
       </table>
       </div>
