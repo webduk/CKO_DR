@@ -63,6 +63,19 @@ function AccountsPage() {
     fetchAccounts()
   }, [])
 
+  // Close the edit modal on Escape.
+  useEffect(() => {
+    if (editingId === null) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setEditingId(null)
+        setEditForm(EMPTY_FORM)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editingId])
+
   async function fetchCompanies() {
     if (!supabase) return
     const { data, error } = await supabase
@@ -496,108 +509,151 @@ function AccountsPage() {
               </td>
             </tr>
           )}
-          {sortedAccounts.map((account) =>
-            editingId === account.id ? (
-              <tr key={account.id}>
-                <td>
-                  <input
-                    type="text"
-                    value={editForm.usi}
-                    onChange={(e) => setEditField('usi', e.target.value)}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    value={editForm.street_address}
-                    onChange={(e) =>
-                      setEditField('street_address', e.target.value)
-                    }
-                  />
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    value={editForm.suburb}
-                    onChange={(e) => setEditField('suburb', e.target.value)}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    value={editForm.postcode}
-                    onChange={(e) => setEditField('postcode', e.target.value)}
-                  />
-                </td>
-                {ROLE_FIELDS.map((f) => (
-                  <td key={f.key}>
-                    <select
-                      value={editForm[f.key]}
-                      onChange={(e) => setEditField(f.key, e.target.value)}
-                    >
-                      <option value="">—</option>
-                      {companies.map((company) => (
-                        <option key={company.id} value={company.id}>
-                          {company.Name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                ))}
-                <td>
-                  <input
-                    type="text"
-                    value={editForm.notes}
-                    onChange={(e) => setEditField('notes', e.target.value)}
-                  />
-                </td>
-                <td className="new-lead-cell">
-                  <input
-                    type="checkbox"
-                    aria-label="New Lead"
-                    checked={editForm.new_lead}
-                    onChange={(e) => setEditField('new_lead', e.target.checked)}
-                  />
-                </td>
-                <td className="row-actions">
-                  <button type="button" onClick={() => saveEdit(account.id)}>
-                    Save
-                  </button>
-                  <button type="button" onClick={cancelEdit}>
-                    Cancel
-                  </button>
-                </td>
-              </tr>
-            ) : (
-              <tr key={account.id}>
-                <td>{account.usi}</td>
-                <td>{account.street_address ?? '—'}</td>
-                <td>{account.suburb ?? '—'}</td>
-                <td>{account.postcode ?? '—'}</td>
-                {ROLE_FIELDS.map((f) => (
-                  <td key={f.key}>{account[f.alias]?.Name ?? '—'}</td>
-                ))}
-                <td>{account.notes ?? '—'}</td>
-                <td className="new-lead-cell">
-                  {account.new_lead ? (
-                    <span className="new-lead-badge">NEW LEAD</span>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-                <td className="row-actions">
-                  <button type="button" onClick={() => startEdit(account)}>
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => deleteAccount(account)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            )
-          )}
+          {sortedAccounts.map((account) => (
+            <tr key={account.id}>
+              <td>{account.usi}</td>
+              <td>{account.street_address ?? '—'}</td>
+              <td>{account.suburb ?? '—'}</td>
+              <td>{account.postcode ?? '—'}</td>
+              {ROLE_FIELDS.map((f) => (
+                <td key={f.key}>{account[f.alias]?.Name ?? '—'}</td>
+              ))}
+              <td>{account.notes ?? '—'}</td>
+              <td className="new-lead-cell">
+                {account.new_lead ? (
+                  <span className="new-lead-badge">NEW LEAD</span>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td className="row-actions">
+                <button type="button" onClick={() => startEdit(account)}>
+                  Edit
+                </button>
+                <button type="button" onClick={() => deleteAccount(account)}>
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
+
+      {editingId !== null && (
+        <div
+          className="modal-backdrop"
+          onClick={cancelEdit}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit account"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2>Edit account</h2>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label="Close"
+                onClick={cancelEdit}
+              >
+                ✕
+              </button>
+            </div>
+            <form
+              className="account-form modal-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                saveEdit(editingId)
+              }}
+            >
+              <label>
+                USI (Unique Site Identifier)
+                <input
+                  type="text"
+                  required
+                  value={editForm.usi}
+                  onChange={(e) => setEditField('usi', e.target.value)}
+                />
+              </label>
+              <label>
+                Street Address
+                <input
+                  type="text"
+                  value={editForm.street_address}
+                  onChange={(e) =>
+                    setEditField('street_address', e.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Suburb
+                <input
+                  type="text"
+                  value={editForm.suburb}
+                  onChange={(e) => setEditField('suburb', e.target.value)}
+                />
+              </label>
+              <label>
+                Postcode
+                <input
+                  type="text"
+                  value={editForm.postcode}
+                  onChange={(e) => setEditField('postcode', e.target.value)}
+                />
+              </label>
+              {ROLE_FIELDS.map((f) => (
+                <label key={f.key}>
+                  {f.label}
+                  <select
+                    value={editForm[f.key]}
+                    onChange={(e) => setEditField(f.key, e.target.value)}
+                  >
+                    <option value="">—</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.Name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <label className="notes-field">
+                Notes
+                <input
+                  type="text"
+                  value={editForm.notes}
+                  onChange={(e) => setEditField('notes', e.target.value)}
+                />
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={editForm.new_lead}
+                  onChange={(e) => setEditField('new_lead', e.target.checked)}
+                />
+                NEW LEAD
+              </label>
+              <div className="modal-actions">
+                <button type="submit">Save changes</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={cancelEdit}
+                >
+                  Cancel
+                </button>
+              </div>
+              {status && (
+                <p className={`form-status ${status.type}`}>{status.message}</p>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

@@ -7,8 +7,14 @@ import supabase from './supabase-client';
 import DesignRequestsPage from './DesignRequestsPage'
 
 // Companies shown as colour-coded active-design-request count widgets under the
-// main blue widget. Requests link to a company directly via company_id.
-const WIDGET_COMPANIES = ['ARW', 'MESO', 'WPA']
+// main blue widget. Each widget counts active design requests that have its
+// checkbox ticked (the arw/meso/wpa boolean columns set from the Add Request
+// form). `column` is the boolean column on design_requests.
+const WIDGET_COMPANIES = [
+  { name: 'ARW', column: 'arw' },
+  { name: 'MESO', column: 'meso' },
+  { name: 'WPA', column: 'wpa' },
+]
 
 function App() {
   const [todos, setTodos] = useState([])
@@ -16,7 +22,7 @@ function App() {
   const [designRequestCount, setDesignRequestCount] = useState(null)
   // Active-design-request counts for the widget companies (ARW, MESO, WPA).
   const [widgetCounts, setWidgetCounts] = useState(
-    WIDGET_COMPANIES.map((name) => ({ name, count: null })),
+    WIDGET_COMPANIES.map((c) => ({ name: c.name, count: null })),
   )
 
   async function fetchDesignRequestCount() {
@@ -31,33 +37,22 @@ function App() {
     setDesignRequestCount(count ?? 0)
   }
 
-  // Count active design requests per widget company, matching by name → id so
-  // the widgets keep working if company ids change.
+  // Count active design requests per widget company by tallying the ticked
+  // arw/meso/wpa boolean columns (set from the Add Request form's checkboxes).
   async function fetchWidgetCounts() {
     if (!supabase) return
-    const { data: companies, error: cErr } = await supabase
-      .from('Companies')
-      .select('id, Name')
-      .in('Name', WIDGET_COMPANIES)
-    if (cErr) {
-      console.error('Error loading widget companies:', cErr)
-      return
-    }
-    const idByName = new Map((companies ?? []).map((c) => [c.Name, c.id]))
-    const { data: reqs, error: rErr } = await supabase
+    const { data: reqs, error } = await supabase
       .from('design_requests')
-      .select('company_id')
+      .select('arw, meso, wpa')
       .eq('status', 'active')
-      .in('company_id', [...idByName.values()])
-    if (rErr) {
-      console.error('Error counting widget design requests:', rErr)
+    if (error) {
+      console.error('Error counting widget design requests:', error)
       return
     }
     setWidgetCounts(
-      WIDGET_COMPANIES.map((name) => ({
-        name,
-        count: (reqs ?? []).filter((r) => r.company_id === idByName.get(name))
-          .length,
+      WIDGET_COMPANIES.map((c) => ({
+        name: c.name,
+        count: (reqs ?? []).filter((r) => r[c.column]).length,
       })),
     )
   }
@@ -172,7 +167,12 @@ function App() {
 
       <div className="ticks"></div>
 
-      <DesignRequestsPage />
+      <DesignRequestsPage
+        onRequestsChanged={() => {
+          fetchDesignRequestCount()
+          fetchWidgetCounts()
+        }}
+      />
 
       <div className="ticks"></div>
 

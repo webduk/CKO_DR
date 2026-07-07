@@ -27,6 +27,15 @@ const PRIORITY_LABELS = Object.fromEntries(
   PRIORITY_OPTIONS.map((p) => [p.value, p.label])
 )
 
+// Company tags a request can be ticked against. Each is an independent boolean
+// column on design_requests; a request may belong to several. These feed the
+// ARW / MESO / WPA count widgets on the home page.
+const COMPANY_TAGS = [
+  { key: 'arw', label: 'ARW' },
+  { key: 'meso', label: 'MESO' },
+  { key: 'wpa', label: 'WPA' },
+]
+
 // The two kinds of files that attach to a design request. Each has its own
 // Storage bucket and metadata table (see supabase/design_request_attachments.sql
 // and supabase/design_request_install_specs.sql). `embed` is the embedded-
@@ -89,7 +98,7 @@ function todayISO() {
   return `${d.getFullYear()}-${mm}-${dd}`
 }
 
-function DesignRequestsPage() {
+function DesignRequestsPage({ onRequestsChanged }) {
   const [accounts, setAccounts] = useState([])
   const [requestTypes, setRequestTypes] = useState([])
   const [designRequests, setDesignRequests] = useState([])
@@ -102,6 +111,12 @@ function DesignRequestsPage() {
   const [reqStatusValue, setReqStatusValue] = useState('active')
   // The new design request's priority ('critical' | 'mid' | 'low').
   const [reqPriorityValue, setReqPriorityValue] = useState('mid')
+  // Which company boxes (ARW/MESO/WPA) are ticked on the create form.
+  const [reqCompanies, setReqCompanies] = useState({
+    arw: false,
+    meso: false,
+    wpa: false,
+  })
   const [reqStatus, setReqStatus] = useState(null)
   // The create form is hidden behind a large "Add Request" button until the
   // user opens it, keeping the page compact by default.
@@ -119,9 +134,11 @@ function DesignRequestsPage() {
   // 'on_hold'). Closed rows are always hidden regardless.
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
-  // When true, each record row shows a "Modify" button in its Actions column.
-  // Toggled by the "Modify Request" button above the table; off by default so
-  // the table reads as a clean at-a-glance summary.
+  // When true, each record row shows an inline status dropdown for quick status
+  // changes without opening the full editor. Toggled by the "Quick Status"
+  // button above the table; off by default so the table reads as a clean
+  // at-a-glance summary. The per-row "Modify" button that opens the field editor
+  // (where the record is saved) is always shown, independent of this.
   const [modifyMode, setModifyMode] = useState(false)
   // `editReqId` is the design request row currently in edit mode (null = none);
   // `editReq` holds its in-progress values until saved or cancelled.
@@ -134,6 +151,9 @@ function DesignRequestsPage() {
     details: '',
     status: 'active',
     priority: 'mid',
+    arw: false,
+    meso: false,
+    wpa: false,
   })
   // Inline management of the Request Type option list (add/rename/delete).
   const [newTypeName, setNewTypeName] = useState('')
@@ -207,6 +227,9 @@ function DesignRequestsPage() {
         details,
         status: reqStatusValue,
         priority: reqPriorityValue,
+        arw: reqCompanies.arw,
+        meso: reqCompanies.meso,
+        wpa: reqCompanies.wpa,
         closed_at: reqStatusValue === 'closed' ? todayISO() : null,
       })
       .select(REQUEST_SELECT)
@@ -244,7 +267,10 @@ function DesignRequestsPage() {
     setReqDetails('')
     setReqStatusValue('active')
     setReqPriorityValue('mid')
+    setReqCompanies({ arw: false, meso: false, wpa: false })
     setPendingFiles([])
+    // Refresh the home-page ARW/MESO/WPA widgets to include the new request.
+    onRequestsChanged?.()
     setReqStatus(
       attachError
         ? {
@@ -354,6 +380,9 @@ function DesignRequestsPage() {
       details: request.details ?? '',
       status: request.status ?? 'active',
       priority: request.priority ?? 'mid',
+      arw: request.arw ?? false,
+      meso: request.meso ?? false,
+      wpa: request.wpa ?? false,
     })
     setReqStatus(null)
   }
@@ -400,6 +429,9 @@ function DesignRequestsPage() {
         details,
         status: editReq.status,
         priority: editReq.priority,
+        arw: editReq.arw,
+        meso: editReq.meso,
+        wpa: editReq.wpa,
       })
       .eq('id', id)
       .select(REQUEST_SELECT)
@@ -423,6 +455,8 @@ function DesignRequestsPage() {
     }
     setDesignRequests((prev) => prev.map((r) => (r.id === id ? data[0] : r)))
     setEditReqId(null)
+    // Company tags or status may have changed; refresh the home-page widgets.
+    onRequestsChanged?.()
     setReqStatus({ type: 'success', message: 'Design record successfully updated.' })
   }
 
@@ -478,6 +512,8 @@ function DesignRequestsPage() {
     }
     setDesignRequests((prev) => prev.filter((r) => r.id !== request.id))
     if (editReqId === request.id) setEditReqId(null)
+    // A deleted request may have been ticked ARW/MESO/WPA; refresh the widgets.
+    onRequestsChanged?.()
     setReqStatus({ type: 'success', message: 'Design request deleted.' })
   }
 
@@ -531,6 +567,8 @@ function DesignRequestsPage() {
     setDesignRequests((prev) =>
       prev.map((r) => (r.id === request.id ? data[0] : r))
     )
+    // Closing/reopening changes which requests are active; refresh the widgets.
+    onRequestsChanged?.()
     setReqStatus({
       type: 'success',
       message:
@@ -666,10 +704,14 @@ function DesignRequestsPage() {
     )
   }, [designRequests, query, priorityFilter, statusFilter])
 
-  // Flat list sorted by date (earliest first); rows with no/invalid date sort
-  // last. A compact single table, matching the All Design Requests page.
+  // Critical-priority requests float to the top of the table; within each
+  // group rows are sorted by date (earliest first), rows with no/invalid date
+  // sorting last.
   const sortedRequests = useMemo(() => {
     return [...filtered].sort((a, b) => {
+      const aCritical = a.priority === 'critical'
+      const bCritical = b.priority === 'critical'
+      if (aCritical !== bCritical) return aCritical ? -1 : 1
       const da = a.request_date ?? ''
       const db = b.request_date ?? ''
       if (!da) return 1
@@ -769,6 +811,23 @@ function DesignRequestsPage() {
                 ))}
               </select>
             </label>
+            <div className="dr-editor-field dr-editor-field--full">
+              <span>Companies</span>
+              <div className="company-tags">
+                {COMPANY_TAGS.map((tag) => (
+                  <label key={tag.key} className="company-tag">
+                    <input
+                      type="checkbox"
+                      checked={!!editReq[tag.key]}
+                      onChange={(e) =>
+                        setEditReq((p) => ({ ...p, [tag.key]: e.target.checked }))
+                      }
+                    />
+                    {tag.label}
+                  </label>
+                ))}
+              </div>
+            </div>
             <label className="dr-editor-field dr-editor-field--full">
               <span>Details</span>
               <textarea
@@ -827,6 +886,13 @@ function DesignRequestsPage() {
         <td className="row-actions">
           <button
             type="button"
+            className="dr-modify-btn"
+            onClick={() => startEditRequest(request)}
+          >
+            Modify
+          </button>
+          <button
+            type="button"
             className="dr-close-btn"
             onClick={() => closeRequest(request)}
           >
@@ -840,27 +906,18 @@ function DesignRequestsPage() {
             Delete
           </button>
           {modifyMode && (
-            <>
-              <select
-                className="dr-status-select"
-                value={request.status}
-                aria-label="Change status"
-                onChange={(e) => updateStatus(request, e.target.value)}
-              >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="dr-modify-btn"
-                onClick={() => startEditRequest(request)}
-              >
-                Modify
-              </button>
-            </>
+            <select
+              className="dr-status-select"
+              value={request.status}
+              aria-label="Change status"
+              onChange={(e) => updateStatus(request, e.target.value)}
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
           )}
         </td>
       </tr>
@@ -943,15 +1000,9 @@ function DesignRequestsPage() {
             type="button"
             className={`modify-request-toggle${modifyMode ? ' active' : ''}`}
             aria-pressed={modifyMode}
-            onClick={() =>
-              setModifyMode((m) => {
-                // Leaving modify mode cancels any half-finished row edit.
-                if (m) setEditReqId(null)
-                return !m
-              })
-            }
+            onClick={() => setModifyMode((m) => !m)}
           >
-            {modifyMode ? 'Done' : 'Modify Request'}
+            {modifyMode ? 'Done' : 'Quick Status'}
           </button>
         </div>
       )}
@@ -1014,6 +1065,26 @@ function DesignRequestsPage() {
             </option>
           ))}
         </select>
+        <fieldset className="company-tags-field">
+          <legend>Companies</legend>
+          <div className="company-tags">
+            {COMPANY_TAGS.map((tag) => (
+              <label key={tag.key} className="company-tag">
+                <input
+                  type="checkbox"
+                  checked={reqCompanies[tag.key]}
+                  onChange={(e) =>
+                    setReqCompanies((prev) => ({
+                      ...prev,
+                      [tag.key]: e.target.checked,
+                    }))
+                  }
+                />
+                {tag.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <FileDropzone
           onFiles={(files) => setPendingFiles((prev) => [...prev, ...files])}
           disabled={uploadingKey === 'attachment:new'}
