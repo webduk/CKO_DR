@@ -548,6 +548,16 @@
   background: color-mix(in srgb, var(--border) 10%, transparent);
 }
 
+/* Rows whose account is flagged as a new lead get a light orange background.
+   Placed after the hover rule so it wins in the resting state; the hover
+   variant below (higher specificity) darkens it slightly on hover. */
+.design-request-table tbody tr.dr-row--new-lead td {
+  background: #ffedd5;
+}
+.design-request-table tbody tr.dr-row--new-lead:hover td {
+  background: #fed7aa;
+}
+
 .design-request-table .month-group th {
   background: var(--accent-bg);
   color: var(--accent);
@@ -575,6 +585,19 @@
   height: 0.42rem;
   border-radius: 50%;
   background: currentColor;
+}
+/* Colour-coded request-type pills (defined after .type-badge so they win). */
+.type-badge--yellow {
+  background: #fef3c7;
+  color: #92400e;
+}
+.type-badge--blue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.type-badge--green {
+  background: #dcfce7;
+  color: #166534;
 }
 
 /* Leading traffic-light dot on the priority badges. Selector is doubled up so
@@ -1404,6 +1427,48 @@
 .report-details {
   white-space: normal;
   min-width: 16rem;
+}
+
+/* Inline "add a company row" affordance under a card's Companies table. */
+.report-add-company {
+  margin-top: 0.5rem;
+}
+.report-add-company-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.report-add-note {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin: 0.25rem 0;
+}
+.report-add-company-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.report-add-company-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0.9;
+}
+.report-new-company {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.report-add-actions {
+  display: flex;
+  gap: 0.4rem;
 }
 
 /* Month sections in the report, with a little breathing room between them. */

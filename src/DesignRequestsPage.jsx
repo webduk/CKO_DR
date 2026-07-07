@@ -56,9 +56,26 @@ const FILE_KINDS = {
 // Columns pulled for every design request, including its embedded attachment and
 // installation-spec rows so both file lists render straight from the joined data.
 const REQUEST_SELECT =
-  '*, accounts(usi), request_type:request_types(name), ' +
+  '*, accounts(usi, new_lead), request_type:request_types(name), ' +
   'design_request_attachments(id, file_name, storage_path, mime_type, size_bytes), ' +
   'design_request_install_specs(id, file_name, storage_path, mime_type, size_bytes)'
+
+// Colour-code the request-type pill on the table by its name: Detail = yellow,
+// Report = blue, the two installation-spec types = green. Matched case-
+// insensitively; unknown types fall back to the default badge colour.
+function typeBadgeClass(name) {
+  switch ((name ?? '').trim().toLowerCase()) {
+    case 'detail':
+      return 'type-badge--yellow'
+    case 'report':
+      return 'type-badge--blue'
+    case 'new installation spec':
+    case 'install spec amendment':
+      return 'type-badge--green'
+    default:
+      return ''
+  }
+}
 
 // Public download URL for a stored file in the given bucket.
 function fileUrl(bucket, path) {
@@ -861,7 +878,10 @@ function DesignRequestsPage({ onRequestsChanged }) {
         </td>
       </tr>
     ) : (
-      <tr key={request.id}>
+      <tr
+        key={request.id}
+        className={request.accounts?.new_lead ? 'dr-row--new-lead' : undefined}
+      >
         <td>
           <span
             className={`status-badge priority-badge priority-badge--${request.priority ?? 'mid'}`}
@@ -871,7 +891,9 @@ function DesignRequestsPage({ onRequestsChanged }) {
         </td>
         <td>
           {request.request_type?.name ? (
-            <span className="type-badge">{request.request_type.name}</span>
+            <span className={`type-badge ${typeBadgeClass(request.request_type.name)}`}>
+              {request.request_type.name}
+            </span>
           ) : (
             '—'
           )}

@@ -24,6 +24,17 @@ const ACCOUNT_SELECT = [
   ),
 ].join(', ')
 
+// Sentinel value for the "+ Create new company…" option in the role's company
+// dropdown, matching the Add/Edit Account page.
+const NEW_COMPANY = '__new_company__'
+
+// Sort companies by Name the way the rest of the app does (case-insensitive).
+function sortCompaniesByName(list) {
+  return [...list].sort((a, b) =>
+    (a.Name ?? '').localeCompare(b.Name ?? '', undefined, { sensitivity: 'base' }),
+  )
+}
+
 const MONTH_NAMES = [
   'January',
   'February',
@@ -58,6 +69,8 @@ function monthLabel(key) {
 
 function AccountsReportPage() {
   const [accounts, setAccounts] = useState([])
+  // Full company list for the "add company row" dropdown in expanded cards.
+  const [companies, setCompanies] = useState([])
   const [contactsByCompany, setContactsByCompany] = useState({})
   const [requestsByAccount, setRequestsByAccount] = useState({})
   const [query, setQuery] = useState('')
@@ -75,17 +88,22 @@ function AccountsReportPage() {
       return
     }
     setLoading(true)
-    const [accountsRes, contactsRes, requestsRes] = await Promise.all([
-      supabase.from('accounts').select(ACCOUNT_SELECT).order('usi'),
-      supabase.from('contacts').select('*').order('name'),
-      supabase
-        .from('design_requests')
-        .select('*')
-        .order('request_date', { ascending: false }),
-    ])
+    const [accountsRes, contactsRes, requestsRes, companiesRes] =
+      await Promise.all([
+        supabase.from('accounts').select(ACCOUNT_SELECT).order('usi'),
+        supabase.from('contacts').select('*').order('name'),
+        supabase
+          .from('design_requests')
+          .select('*')
+          .order('request_date', { ascending: false }),
+        supabase.from('Companies').select('id, Name, "Company Type"').order('Name'),
+      ])
 
     const firstError =
-      accountsRes.error || contactsRes.error || requestsRes.error
+      accountsRes.error ||
+      contactsRes.error ||
+      requestsRes.error ||
+      companiesRes.error
     if (firstError) {
       console.error('Error loading report:', firstError)
       setError(firstError.message)
@@ -98,8 +116,21 @@ function AccountsReportPage() {
     // Design requests now belong to a specific account, so group them by
     // account_id — no more bleed across every account sharing a company.
     setRequestsByAccount(groupBy(requestsRes.data ?? [], 'account_id'))
+    setCompanies(companiesRes.data ?? [])
     setError(null)
     setLoading(false)
+  }
+
+  // Replace an account in state with its freshly-updated row (after linking a
+  // company to one of its roles) so the expanded card re-renders the new row.
+  function handleAccountUpdated(updated) {
+    setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
+  }
+
+  // Add a just-created company to the shared list so it appears in every card's
+  // dropdown without a full reload.
+  function handleCompanyCreated(company) {
+    setCompanies((prev) => sortCompaniesByName([...prev, company]))
   }
 
   useEffect(() => {
@@ -187,9 +218,12 @@ function AccountsReportPage() {
               <AccountReportCard
                 key={account.id}
                 account={account}
+                companies={companies}
                 contactsByCompany={contactsByCompany}
                 requestsByAccount={requestsByAccount}
                 isTarget={String(account.id) === targetAccountId}
+                onAccountUpdated={handleAccountUpdated}
+                onCompanyCreated={handleCompanyCreated}
               />
             ))}
           </section>
@@ -204,15 +238,109 @@ function AccountsReportPage() {
 
 function AccountReportCard({
   account,
+  companies,
   contactsByCompany,
   requestsByAccount,
   isTarget,
+  onAccountUpdated,
+  onCompanyCreated,
 }) {
   // Each card starts collapsed, showing only the header. The Expand button
   // reveals the companies, contacts, and design-request tables. A card linked
   // to from the map (isTarget) opens expanded.
   const [expanded, setExpanded] = useState(isTarget)
   const cardRef = useRef(null)
+
+  // Inline "add a company row" form under the Companies table. `adding` opens
+  // it; a role FK is set on this account, optionally creating a new company
+  // first (mirrors the Add/Edit Account page's inline create-company flow).
+  const [adding, setAdding] = useState(false)
+  const [addRole, setAddRole] = useState('')
+  const [addCompanyId, setAddCompanyId] = useState('')
+  const [newCompany, setNewCompany] = useState({ name: '', type: '' })
+  const [saving, setSaving] = useState(false)
+  const [addStatus, setAddStatus] = useState(null)
+
+  // Only roles without a company yet can take a new row (each role holds one
+  // company). When all seven are filled there is nothing left to add.
+  const availableRoles = ROLE_FIELDS.filter((f) => account[f.key] == null)
+
+  function resetAddForm() {
+    setAdding(false)
+    setAddRole('')
+    setAddCompanyId('')
+    setNewCompany({ name: '', type: '' })
+  }
+
+  async function saveCompanyRow() {
+    if (!supabase) return
+    if (!addRole) {
+      setAddStatus({ type: 'error', message: 'Please choose a role.' })
+      return
+    }
+    setAddStatus(null)
+    // Resolve the company id, creating a new company first when requested.
+    let companyId
+    if (addCompanyId === NEW_COMPANY) {
+      const name = newCompany.name.trim()
+      if (!name) {
+        setAddStatus({ type: 'error', message: 'New company name is required.' })
+        return
+      }
+      const payload = { Name: name }
+      const type = newCompany.type.trim()
+      if (type) payload['Company Type'] = type
+      setSaving(true)
+      const { data: created, error } = await supabase
+        .from('Companies')
+        .insert(payload)
+        .select('id, Name, "Company Type"')
+        .single()
+      if (error) {
+        setSaving(false)
+        setAddStatus({
+          type: 'error',
+          message: `Could not add company: ${error.message}`,
+        })
+        return
+      }
+      onCompanyCreated?.(created)
+      companyId = created.id
+    } else {
+      if (!addCompanyId) {
+        setAddStatus({ type: 'error', message: 'Please choose a company.' })
+        return
+      }
+      companyId = Number(addCompanyId)
+      setSaving(true)
+    }
+    // Link the company to this account by setting the role's FK column.
+    const { data, error } = await supabase
+      .from('accounts')
+      .update({ [addRole]: companyId })
+      .eq('id', account.id)
+      .select(ACCOUNT_SELECT)
+    setSaving(false)
+    if (error) {
+      setAddStatus({
+        type: 'error',
+        message: `Could not link company: ${error.message}`,
+      })
+      return
+    }
+    if (!data || data.length === 0) {
+      setAddStatus({
+        type: 'error',
+        message:
+          'Update was blocked by the database (no row changed). Check the ' +
+          'Supabase Row-Level Security UPDATE policy on the accounts table.',
+      })
+      return
+    }
+    onAccountUpdated?.(data[0])
+    resetAddForm()
+    setAddStatus({ type: 'success', message: 'Company added.' })
+  }
 
   // When this is the account linked from the map, bring it into view and flash
   // it so the user lands on the right record.
@@ -298,6 +426,94 @@ function AccountReportCard({
               ))}
             </tbody>
           </table>
+
+          <div className="report-add-company">
+            {!adding ? (
+              availableRoles.length > 0 ? (
+                <button
+                  type="button"
+                  className="report-add-company-btn"
+                  onClick={() => {
+                    setAddStatus(null)
+                    setAdding(true)
+                  }}
+                >
+                  + Add company
+                </button>
+              ) : (
+                <p className="report-add-note">All roles assigned.</p>
+              )
+            ) : (
+              <div className="report-add-company-form">
+                <label>
+                  <span>Role</span>
+                  <select
+                    value={addRole}
+                    onChange={(e) => setAddRole(e.target.value)}
+                  >
+                    <option value="">Select a role…</option>
+                    {availableRoles.map((f) => (
+                      <option key={f.key} value={f.key}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Company</span>
+                  <select
+                    value={addCompanyId}
+                    onChange={(e) => setAddCompanyId(e.target.value)}
+                  >
+                    <option value="">Select a company…</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.Name}
+                      </option>
+                    ))}
+                    <option value={NEW_COMPANY}>+ Create new company…</option>
+                  </select>
+                </label>
+                {addCompanyId === NEW_COMPANY && (
+                  <div className="report-new-company">
+                    <input
+                      type="text"
+                      value={newCompany.name}
+                      onChange={(e) =>
+                        setNewCompany((p) => ({ ...p, name: e.target.value }))
+                      }
+                      placeholder="New company name"
+                    />
+                    <input
+                      type="text"
+                      value={newCompany.type}
+                      onChange={(e) =>
+                        setNewCompany((p) => ({ ...p, type: e.target.value }))
+                      }
+                      placeholder="Company type (optional)"
+                    />
+                  </div>
+                )}
+                <div className="report-add-actions">
+                  <button
+                    type="button"
+                    onClick={saveCompanyRow}
+                    disabled={saving}
+                  >
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button type="button" onClick={resetAddForm} disabled={saving}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {addStatus && (
+              <p className={`form-status ${addStatus.type}`}>
+                {addStatus.message}
+              </p>
+            )}
+          </div>
 
           <h3>Contacts</h3>
           <table className="account-table">
