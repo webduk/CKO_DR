@@ -10,6 +10,7 @@ import AccountsReportPage from './AccountsReportPage.jsx'
 import CompaniesPage from './CompaniesPage.jsx'
 import LeadsPage from './LeadsPage.jsx'
 import DesignRequestsAllPage from './DesignRequestsAllPage.jsx'
+import CompanyRequestsPage from './CompanyRequestsPage.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -23,6 +24,10 @@ createRoot(document.getElementById('root')).render(
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/leads" element={<LeadsPage />} />
         <Route path="/design-requests" element={<DesignRequestsAllPage />} />
+        <Route
+          path="/design-requests/company/:company"
+          element={<CompanyRequestsPage />}
+        />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

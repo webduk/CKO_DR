@@ -303,6 +303,15 @@
   max-width: 80rem;
   margin: 0 auto;
   padding: 2rem 1.5rem;
+  /* The `margin: 0 auto` above is a cross-axis auto margin, which opts this
+     flex item of #root out of `align-items: stretch` — leaving it sized to its
+     content, i.e. as wide as the widest table. Past a certain column count that
+     pushed the whole document into a horizontal scroll. Filling the flex line
+     instead (border-box so the padding stays inside) keeps the page within its
+     container, so a wide table scrolls inside .dr-table-card's own overflow-x
+     the way that rule intends. */
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .request-type-manager {
@@ -522,6 +531,12 @@
 /* Keep each requestor's name on a single line (no wrapping). */
 .design-request-table .dr-requestor {
   white-space: nowrap;
+}
+/* Leading site-identifier (USI) column: kept on one line and slightly bolder,
+   since it's the row's primary reference. */
+.design-request-table .dr-usi {
+  white-space: nowrap;
+  font-weight: 600;
 }
 
 .design-request-table th,
@@ -1076,6 +1091,16 @@
 .contact-form input {
   font: inherit;
   padding: 0.4rem 0.5rem;
+  /* Grow to share the row's width instead of sitting at the fixed browser
+     default. `min-width: 0` lets them shrink below their intrinsic size so all
+     four fit on one line, wrapping only when the row gets narrow. */
+  flex: 1 1 12rem;
+  min-width: 0;
+  box-sizing: border-box;
+}
+/* Keep the status message on its own full-width line under the fields. */
+.contact-form .form-status {
+  flex-basis: 100%;
 }
 
 .field-hint {
@@ -1420,6 +1445,59 @@
   padding: 0.3rem 0.7rem;
   cursor: pointer;
 }
+/* Pin control in each card header: a star checkbox the user clicks to pin the
+   account to the top. Sits just before the Expand button (which keeps its
+   margin-left: auto). The real <input> is visually hidden (.sr-only) and the
+   star reflects its checked state. */
+.report-pin {
+  align-self: center;
+  display: inline-flex;
+  cursor: pointer;
+}
+.report-pin-star {
+  font-size: 1.5rem;
+  line-height: 1;
+  color: #cbd1d9;
+  transition: color 0.12s ease, transform 0.12s ease;
+}
+/* Checked: a filled gold star. */
+.report-pin-checkbox:checked ~ .report-pin-star {
+  color: #f5a623;
+}
+.report-pin:hover .report-pin-star {
+  transform: scale(1.15);
+}
+/* Keyboard focus ring on the star (the input itself is off-screen). */
+.report-pin-checkbox:focus-visible ~ .report-pin-star {
+  outline: 2px solid #2d6cdf;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* In-flight pin write: dim and lock the control. */
+.report-pin-checkbox:disabled ~ .report-pin-star {
+  opacity: 0.5;
+}
+.report-pin:has(.report-pin-checkbox:disabled) {
+  cursor: default;
+}
+/* Pin error sits on its own line under the header row (full width). */
+.report-pin-error {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
+/* Visually hidden but readable to screen readers (the pin select's label). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .report-card h3 {
   font-size: 1rem;
   margin: 1.25rem 0 0.5rem;
@@ -1484,6 +1562,12 @@
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: 0.02em;
+}
+
+/* The "Pinned" section bar at the top of the report: amber to set it apart
+   from the blue month bars below. */
+.report-pinned-bar {
+  background: #b45309;
 }
 
 /* Highlight active design request rows so they stand out in the report. */

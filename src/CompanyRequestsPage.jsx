@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import './App.css'
 import supabase from './supabase-client'
 
@@ -22,7 +22,16 @@ const PRIORITY_OPTIONS = [
 ]
 const PRIORITY_LABELS = Object.fromEntries(PRIORITY_OPTIONS.map((p) => [p.value, p.label]))
 
-const SELECT = '*, accounts(usi), request_type:request_types(name)'
+// The three widget companies keyed by their boolean column on design_requests —
+// this is the :company URL param the home-page widgets link to. Any other value
+// is treated as unknown and the page shows a not-found message.
+const COMPANIES = {
+  arw: { label: 'ARW' },
+  meso: { label: 'MESO' },
+  wpa: { label: 'WPA' },
+}
+
+const SELECT = '*, request_type:request_types(name)'
 
 // "16 Jun 2026" from an ISO date string, parsed off the string to avoid a
 // timezone shift rolling the day backwards.
@@ -33,23 +42,23 @@ function formatDate(dateStr) {
   return `${Number(day)} ${MONTH_NAMES[idx].slice(0, 3)} ${year}`
 }
 
-// The dedicated, read-only archive of EVERY design request — including closed
-// ones, which are hidden from the home-page summary. Editing and closing still
-// happen on the home page; this page is the complete reference table.
-function DesignRequestsAllPage() {
+// A per-company summary of its design requests, reached by clicking the ARW /
+// MESO / WPA widget on the home page. Read-only: rows are still created, edited
+// and closed from the home page and the All Design Requests archive.
+function CompanyRequestsPage() {
+  const { company } = useParams()
+  const meta = COMPANIES[company]
   const [designRequests, setDesignRequests] = useState([])
-  const [query, setQuery] = useState('')
-  const [priorityFilter, setPriorityFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
 
   async function fetchDesignRequests() {
-    if (!supabase) return
+    if (!supabase || !meta) return
     const { data, error } = await supabase
       .from('design_requests')
       .select(SELECT)
+      .eq(company, true)
       .order('request_date', { ascending: false })
     if (error) {
-      console.error('Error fetching design requests:', error)
+      console.error('Error fetching company design requests:', error)
       return
     }
     setDesignRequests(data ?? [])
@@ -58,75 +67,70 @@ function DesignRequestsAllPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState runs after await, not synchronously
     fetchDesignRequests()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch whenever the :company param changes; fetchDesignRequests is stable
+  }, [company])
 
-  const filtered = useMemo(() => {
-    let rows = designRequests
-    if (priorityFilter !== 'all') {
-      rows = rows.filter((r) => (r.priority ?? 'mid') === priorityFilter)
+  // Headline tallies for the summary tiles: total, open (active + on-hold),
+  // closed, and how many of the open ones are critical.
+  const stats = useMemo(() => {
+    const open = designRequests.filter((r) => r.status !== 'closed')
+    return {
+      total: designRequests.length,
+      open: open.length,
+      closed: designRequests.filter((r) => r.status === 'closed').length,
+      critical: open.filter((r) => r.priority === 'critical').length,
     }
-    if (statusFilter !== 'all') {
-      rows = rows.filter((r) => r.status === statusFilter)
-    }
-    const q = query.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((r) =>
-      [r.accounts?.usi, r.request_type?.name, r.requestor_name, r.details, r.request_date, r.status, r.priority]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q))
+  }, [designRequests])
+
+  if (!meta) {
+    return (
+      <main className="design-requests-page">
+        <Link to="/" className="back-link">
+          ← Back to home
+        </Link>
+        <h1>Unknown company</h1>
+        <p className="page-intro">
+          “{company}” is not a recognised company. Choose ARW, MESO or WPA from
+          the home page.
+        </p>
+      </main>
     )
-  }, [designRequests, query, priorityFilter, statusFilter])
+  }
 
   return (
     <main className="design-requests-page">
       <Link to="/" className="back-link">
         ← Back to home
       </Link>
-      <h1>All Design Requests</h1>
+      <h1>{meta.label} Design Requests</h1>
       <p className="page-intro">
-        Every design request, including closed ones. Requests are created,
-        edited and closed from the home page.
+        Every design request tagged {meta.label}, including closed ones. Requests
+        are created, edited and closed from the home page.
       </p>
 
-      <div className="design-request-filters">
-        <input
-          type="search"
-          className="design-request-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by site, requestor, request type or details…"
-        />
-        <select
-          className="design-request-filter"
-          value={priorityFilter}
-          onChange={(e) => setPriorityFilter(e.target.value)}
-        >
-          <option value="all">All priorities</option>
-          {PRIORITY_OPTIONS.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-        <select
-          className="design-request-filter"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="all">All statuses</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
+      <div className="report-widgets">
+        <div className={`stat-widget report-widget report-widget--${company}`}>
+          <span className="stat-number">{stats.open}</span>
+          <span className="stat-label">Open</span>
+        </div>
+        <div className="stat-widget report-widget">
+          <span className="stat-number">{stats.critical}</span>
+          <span className="stat-label">Critical (open)</span>
+        </div>
+        <div className="stat-widget report-widget">
+          <span className="stat-number">{stats.closed}</span>
+          <span className="stat-label">Closed</span>
+        </div>
+        <div className="stat-widget report-widget">
+          <span className="stat-number">{stats.total}</span>
+          <span className="stat-label">Total</span>
+        </div>
       </div>
 
       <div className="dr-table-card">
         <table className="design-request-table">
           <thead>
             <tr>
-              <th>USI</th>
               <th>Priority</th>
               <th>Request Type</th>
               <th>Requestor</th>
@@ -137,18 +141,15 @@ function DesignRequestsAllPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {designRequests.length === 0 && (
               <tr>
-                <td className="empty" colSpan={8}>
-                  {query || priorityFilter !== 'all' || statusFilter !== 'all'
-                    ? 'No design requests match the current filters'
-                    : 'No design requests yet'}
+                <td className="empty" colSpan={7}>
+                  No design requests tagged {meta.label} yet
                 </td>
               </tr>
             )}
-            {filtered.map((r) => (
+            {designRequests.map((r) => (
               <tr key={r.id}>
-                <td className="dr-usi">{r.accounts?.usi ?? '—'}</td>
                 <td>
                   <span
                     className={`status-badge priority-badge priority-badge--${r.priority ?? 'mid'}`}
@@ -187,4 +188,4 @@ function DesignRequestsAllPage() {
   )
 }
 
-export default DesignRequestsAllPage
+export default CompanyRequestsPage

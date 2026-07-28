@@ -744,7 +744,7 @@ function DesignRequestsPage({ onRequestsChanged }) {
   function renderRequestRow(request) {
     return editReqId === request.id ? (
       <tr key={request.id} className="dr-editor-row">
-        <td colSpan={6}>
+        <td colSpan={7}>
           <div className="dr-editor">
             <label className="dr-editor-field">
               <span>Site (account)</span>
@@ -882,6 +882,7 @@ function DesignRequestsPage({ onRequestsChanged }) {
         key={request.id}
         className={request.accounts?.new_lead ? 'dr-row--new-lead' : undefined}
       >
+        <td className="dr-usi">{request.accounts?.usi ?? '—'}</td>
         <td>
           <span
             className={`status-badge priority-badge priority-badge--${request.priority ?? 'mid'}`}
@@ -1247,6 +1248,7 @@ function DesignRequestsPage({ onRequestsChanged }) {
       <table className="design-request-table">
         <thead>
           <tr>
+            <th>USI</th>
             <th>Priority</th>
             <th>Request Type</th>
             <th>Requestor</th>
@@ -1258,7 +1260,7 @@ function DesignRequestsPage({ onRequestsChanged }) {
         <tbody>
           {filtered.length === 0 && (
             <tr>
-              <td className="empty" colSpan={6}>
+              <td className="empty" colSpan={7}>
                 {query
                   ? `No design requests match “${query}”`
                   : 'No active or on-hold design requests'}

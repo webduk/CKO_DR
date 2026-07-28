@@ -9,7 +9,8 @@ import DesignRequestsPage from './DesignRequestsPage'
 // Companies shown as colour-coded active-design-request count widgets under the
 // main blue widget. Each widget counts active design requests that have its
 // checkbox ticked (the arw/meso/wpa boolean columns set from the Add Request
-// form). `column` is the boolean column on design_requests.
+// form). `column` is the boolean column on design_requests, and doubles as the
+// URL param linking each widget to its /design-requests/company/:company summary.
 const WIDGET_COMPANIES = [
   { name: 'ARW', column: 'arw' },
   { name: 'MESO', column: 'meso' },
@@ -22,7 +23,7 @@ function App() {
   const [designRequestCount, setDesignRequestCount] = useState(null)
   // Active-design-request counts for the widget companies (ARW, MESO, WPA).
   const [widgetCounts, setWidgetCounts] = useState(
-    WIDGET_COMPANIES.map((c) => ({ name: c.name, count: null })),
+    WIDGET_COMPANIES.map((c) => ({ name: c.name, column: c.column, count: null })),
   )
 
   async function fetchDesignRequestCount() {
@@ -52,6 +53,7 @@ function App() {
     setWidgetCounts(
       WIDGET_COMPANIES.map((c) => ({
         name: c.name,
+        column: c.column,
         count: (reqs ?? []).filter((r) => r[c.column]).length,
       })),
     )
@@ -154,13 +156,14 @@ function App() {
 
         <div className="report-widgets">
           {widgetCounts.map((w) => (
-            <div
+            <Link
               key={w.name}
+              to={`/design-requests/company/${w.column}`}
               className={`stat-widget report-widget report-widget--${w.name.toLowerCase()}`}
             >
               <span className="stat-number">{w.count ?? '—'}</span>
               <span className="stat-label">{w.name}</span>
-            </div>
+            </Link>
           ))}
         </div>
       </section>

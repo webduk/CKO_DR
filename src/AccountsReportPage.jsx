@@ -161,13 +161,24 @@ function AccountsReportPage() {
     })
   }, [accounts, query, requestsByAccount])
 
+  // Pinned accounts float to the very top of the page in their own section,
+  // regardless of their request date. They keep the same relative order as the
+  // rest of the list (earliest request date first). The `pinned` flag is the
+  // accounts.pinned column (see supabase/accounts_pinned.sql).
+  const pinnedAccounts = useMemo(
+    () => filtered.filter((a) => a.pinned),
+    [filtered],
+  )
+
   // Group the (already date-sorted) accounts into month sections by the month of
   // their earliest active design request. Accounts with no requests fall into a
-  // trailing "none" group that renders without a month bar.
+  // trailing "none" group that renders without a month bar. Pinned accounts are
+  // shown separately at the top, so they're excluded here.
   const monthGroups = useMemo(() => {
     const groups = []
     const indexByKey = new Map()
     for (const account of filtered) {
+      if (account.pinned) continue
       const date = earliestRequestDate(account, requestsByAccount)
       const key = date ? date.slice(0, 7) : 'none'
       if (!indexByKey.has(key)) {
@@ -205,6 +216,24 @@ function AccountsReportPage() {
           {filtered.length} of {accounts.length} account
           {accounts.length === 1 ? '' : 's'}
         </p>
+      )}
+
+      {!loading && !error && pinnedAccounts.length > 0 && (
+        <section className="report-month report-pinned">
+          <div className="report-month-bar report-pinned-bar">📌 Pinned</div>
+          {pinnedAccounts.map((account) => (
+            <AccountReportCard
+              key={account.id}
+              account={account}
+              companies={companies}
+              contactsByCompany={contactsByCompany}
+              requestsByAccount={requestsByAccount}
+              isTarget={String(account.id) === targetAccountId}
+              onAccountUpdated={handleAccountUpdated}
+              onCompanyCreated={handleCompanyCreated}
+            />
+          ))}
+        </section>
       )}
 
       {!loading &&
@@ -260,6 +289,46 @@ function AccountReportCard({
   const [newCompany, setNewCompany] = useState({ name: '', type: '' })
   const [saving, setSaving] = useState(false)
   const [addStatus, setAddStatus] = useState(null)
+
+  // Pin/unpin this account (accounts.pinned). While the write is in flight the
+  // select is disabled; on failure we leave the account as it was and show why.
+  const [pinning, setPinning] = useState(false)
+  const [pinError, setPinError] = useState(null)
+
+  async function updatePinned(next) {
+    if (!supabase || pinning || next === !!account.pinned) return
+    setPinError(null)
+    setPinning(true)
+    const { data, error } = await supabase
+      .from('accounts')
+      .update({ pinned: next })
+      .eq('id', account.id)
+      .select(ACCOUNT_SELECT)
+    setPinning(false)
+    if (error) {
+      // The most likely first-run failure is the column not existing yet.
+      // PostgREST phrases this as "Could not find the 'pinned' column … in the
+      // schema cache" (code PGRST204), so match on the column name plus either
+      // "column" or "schema cache".
+      const missingColumn =
+        /pinned/i.test(error.message) &&
+        /(column|schema cache)/i.test(error.message)
+      setPinError(
+        missingColumn
+          ? 'Pinning needs the accounts.pinned column — run supabase/accounts_pinned.sql once in Supabase.'
+          : `Could not update pin: ${error.message}`,
+      )
+      return
+    }
+    if (!data || data.length === 0) {
+      setPinError(
+        'Update was blocked by the database (no row changed). Check the ' +
+          'Supabase Row-Level Security UPDATE policy on the accounts table.',
+      )
+      return
+    }
+    onAccountUpdated?.(data[0])
+  }
 
   // Only roles without a company yet can take a new row (each role holds one
   // company). When all seven are filled there is nothing left to add.
@@ -388,6 +457,22 @@ function AccountReportCard({
       <header className="report-card-header">
         <h2>{account.usi}</h2>
         {address && <span className="report-address">{address}</span>}
+        <label
+          className="report-pin"
+          title={account.pinned ? 'Pinned to top — click to unpin' : 'Pin to top'}
+        >
+          <input
+            type="checkbox"
+            className="report-pin-checkbox sr-only"
+            checked={!!account.pinned}
+            disabled={pinning}
+            onChange={(e) => updatePinned(e.target.checked)}
+          />
+          <span className="report-pin-star" aria-hidden="true">
+            {account.pinned ? '★' : '☆'}
+          </span>
+          <span className="sr-only">Pin {account.usi} to top</span>
+        </label>
         <button
           type="button"
           className="report-toggle"
@@ -396,6 +481,7 @@ function AccountReportCard({
         >
           {expanded ? 'Collapse' : 'Expand'}
         </button>
+        {pinError && <p className="form-status error report-pin-error">{pinError}</p>}
       </header>
 
       {expanded && (
